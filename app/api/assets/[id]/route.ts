@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+// Next.js 15: params is a Promise — must be awaited before use
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const db = getDb()
-  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(params.id) as any
+  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any
   if (!asset) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json({
     ...asset,
@@ -11,7 +13,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   })
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const db = getDb()
   const body = await req.json()
   const fields = ['title','description','url','file_path','status','tags','category','entity']
@@ -27,15 +30,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (!updates.length) return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
   updates.push('updated_at = CURRENT_TIMESTAMP')
-  vals.push(params.id)
+  vals.push(id)
 
   db.prepare(`UPDATE assets SET ${updates.join(', ')} WHERE id = ?`).run(...vals)
-  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(params.id) as any
+  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any
   return NextResponse.json({ asset, success: true })
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const db = getDb()
-  db.prepare('DELETE FROM assets WHERE id = ?').run(params.id)
+  db.prepare('DELETE FROM assets WHERE id = ?').run(id)
   return NextResponse.json({ success: true })
 }

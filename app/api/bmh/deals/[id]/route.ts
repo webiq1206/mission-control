@@ -15,15 +15,17 @@ import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
 
+// Next.js 15: params is a Promise — must be awaited before use
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = requireAuth(req)
   if (auth) return auth
 
+  const { id } = await params
   const db = getDb()
-  const row = db.prepare('SELECT * FROM bmh_deals WHERE id = ?').get(params.id) as Record<string, unknown> | undefined
+  const row = db.prepare('SELECT * FROM bmh_deals WHERE id = ?').get(id) as Record<string, unknown> | undefined
 
   if (!row) {
     return NextResponse.json({ error: 'Deal not found' }, { status: 404 })
@@ -39,11 +41,12 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = requireAuth(req)
   if (auth) return auth
 
+  const { id } = await params
   const db = getDb()
   const body = await req.json() as { stage: number; clint_context?: boolean }
 
@@ -62,7 +65,7 @@ export async function PUT(
   }
 
   // Verify the deal exists before updating
-  const existing = db.prepare('SELECT id FROM bmh_deals WHERE id = ?').get(params.id)
+  const existing = db.prepare('SELECT id FROM bmh_deals WHERE id = ?').get(id)
   if (!existing) {
     return NextResponse.json({ error: 'Deal not found' }, { status: 404 })
   }
@@ -74,10 +77,10 @@ export async function PUT(
         last_stage_advance_at = datetime('now'),
         updated_at = datetime('now')
     WHERE id = ?
-  `).run(newStage, params.id)
+  `).run(newStage, id)
 
   // Return the updated deal
-  const updated = db.prepare('SELECT * FROM bmh_deals WHERE id = ?').get(params.id) as Record<string, unknown>
+  const updated = db.prepare('SELECT * FROM bmh_deals WHERE id = ?').get(id) as Record<string, unknown>
   return NextResponse.json({
     ...updated,
     signals:          safeJsonArray(updated.signals),

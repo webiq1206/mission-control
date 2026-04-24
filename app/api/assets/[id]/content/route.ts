@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import fs from 'fs'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+// Next.js 15: params is a Promise — must be awaited before use
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const db = getDb()
-  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(params.id) as any
+  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any
   if (!asset) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const fp = asset.file_path
