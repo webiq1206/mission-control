@@ -7,6 +7,7 @@ import { format } from 'date-fns'
 import Link from 'next/link'
 import { currencyFormatter, percentageFormatter, dayFormatter, getOrdinal } from '@/lib/formatters'
 import { DocumentIcon } from '@heroicons/react/24/outline'
+// Note: this is a Server Component — no React hooks permitted here
 
 export default async function PropertyDetailPage({
   params,
@@ -60,7 +61,9 @@ export default async function PropertyDetailPage({
 
   const now = new Date()
 
-  const getLoanPaymentStatusBadge = useCallback((loan: typeof allLoans[number]) => {
+  // Plain function — Server Component, hooks not permitted
+  // dueDay null guard: all arithmetic is gated behind `if (dueDay !== null && typeof dueDay === 'number')`
+  function getLoanPaymentStatusBadge(loan: typeof allLoans[number]) {
     const dueDay = loan.due_day
     const lastPaymentDate = loan.last_payment_date ? new Date(loan.last_payment_date) : null
     const currentMonth = now.getMonth()
@@ -94,15 +97,17 @@ export default async function PropertyDetailPage({
       )
     }
 
-    if (dueDay !== null) {
+    // Guard: ensure dueDay is a valid number before any arithmetic
+    if (dueDay !== null && dueDay !== undefined && typeof Number(dueDay) === 'number' && !isNaN(Number(dueDay))) {
+      const dueDayNum = Number(dueDay)
       const today = now.getDate()
       const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate()
       let daysUntilDue = 0
-      if (dueDay > today) {
-        daysUntilDue = dueDay - today
+      if (dueDayNum > today) {
+        daysUntilDue = dueDayNum - today
       } else {
         // If due day is in the past this month, calculate days until next month's due day
-        daysUntilDue = (daysInMonth - today) + dueDay
+        daysUntilDue = (daysInMonth - today) + dueDayNum
       }
       
       if (daysUntilDue <= 5 && daysUntilDue >= 0) {
@@ -131,7 +136,7 @@ export default async function PropertyDetailPage({
         Current
       </span>
     )
-  }, [now])
+  }
 
   function daysUntil(dateStr: string | null): number | null {
     if (!dateStr) return null
@@ -397,7 +402,8 @@ export default async function PropertyDetailPage({
                         {currencyFormatter.format(loan.monthly_payment || 0)}
                       </td>
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>
-                        {dayFormatter.format(loan.due_day)} {getOrdinal(Number(loan.due_day))}
+                        {/* Null guard: due_day may be null if not set on this loan */}
+                        {loan.due_day != null ? `${dayFormatter.format(Number(loan.due_day))} ${getOrdinal(Number(loan.due_day))}` : '—'}
                       </td>
                       <td style={{ padding: '8px 10px' }}>
                         {getLoanPaymentStatusBadge(loan)}
