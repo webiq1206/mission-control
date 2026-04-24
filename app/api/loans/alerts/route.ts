@@ -85,7 +85,9 @@ export async function GET(req: NextRequest) {
   const allAlerts: Record<string, unknown>[] = []
 
   for (const loan of [...pastDue, ...dueSoon, ...maturingSoon]) {
-    const key = `${loan.id}-${loan.alert_type}`
+    // Cast to Record<string,unknown> to access id/alert_type — dueSoon items are spread objects with these fields
+    const loanRecord = loan as Record<string, unknown>
+    const key = `${loanRecord.id}-${loanRecord.alert_type}`
     if (!seenIds.has(key)) {
       seenIds.add(key)
       allAlerts.push(loan)

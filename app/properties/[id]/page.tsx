@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import React from 'react'
 import { getDb } from '@/lib/db'
 import { getHoldingCompany } from '@/lib/properties'
 import { notFound } from 'next/navigation'
@@ -63,7 +64,8 @@ export default async function PropertyDetailPage({
 
   // Plain function — Server Component, hooks not permitted
   // dueDay null guard: all arithmetic is gated behind `if (dueDay !== null && typeof dueDay === 'number')`
-  function getLoanPaymentStatusBadge(loan: typeof allLoans[number]) {
+  // Return type explicitly declared as ReactNode — allLoans contains Record<string,unknown> which causes inferred return to be unknown
+  function getLoanPaymentStatusBadge(loan: typeof allLoans[number]): React.ReactNode {
     const dueDay = loan.due_day
     const lastPaymentDate = loan.last_payment_date ? new Date(loan.last_payment_date) : null
     const currentMonth = now.getMonth()
@@ -390,16 +392,17 @@ export default async function PropertyDetailPage({
                         {LOAN_TYPE_LABELS[loan.loan_type as string] || (loan.loan_type as string) || '—'}
                       </td>
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>
-                        {currencyFormatter.format(loan.principal_amount || 0)}
+                        {/* Cast unknown DB fields to number before formatting — SQL schema guarantees numeric type */}
+                        {currencyFormatter.format(Number(loan.principal_amount) || 0)}
                       </td>
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 600 }}>
-                        {currencyFormatter.format(loan.outstanding_balance || loan.principal_amount || 0)}
+                        {currencyFormatter.format(Number(loan.outstanding_balance) || Number(loan.principal_amount) || 0)}
                       </td>
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>
-                        {percentageFormatter.format(loan.interest_rate || 0)}
+                        {percentageFormatter.format(Number(loan.interest_rate) || 0)}
                       </td>
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: 'var(--yellow)', fontWeight: 600 }}>
-                        {currencyFormatter.format(loan.monthly_payment || 0)}
+                        {currencyFormatter.format(Number(loan.monthly_payment) || 0)}
                       </td>
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>
                         {/* Null guard: due_day may be null if not set on this loan */}
@@ -423,11 +426,12 @@ export default async function PropertyDetailPage({
                         )}
                       </td>
                       <td style={{ padding: '8px 10px' }}>
-                        {loan.drive_doc_url && (
-                          <a href={loan.drive_doc_url as string} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
+                        {/* Explicit string cast: drive_doc_url is unknown from DB record, narrowed to string for href */}
+                        {typeof loan.drive_doc_url === 'string' && loan.drive_doc_url ? (
+                          <a href={loan.drive_doc_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
                             <DocumentIcon className="w-4 h-4" />
                           </a>
-                        )}
+                        ) : null}
                       </td>
                     </tr>
                   )

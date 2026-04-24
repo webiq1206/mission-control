@@ -111,7 +111,8 @@ function IdeasContent() {
     byEntity[key].push(idea)
   }
 
-  const sortedKeys = ENTITIES.map(e => e.label).filter(l => byEntity[l])
+  // Cast to string[] — ENTITIES labels are a const union but filter result is always string at runtime
+  const sortedKeys = (ENTITIES.map(e => e.label) as string[]).filter(l => byEntity[l])
   const extra = Object.keys(byEntity).filter(k => !sortedKeys.includes(k))
   const allKeys = [...sortedKeys, ...extra]
 

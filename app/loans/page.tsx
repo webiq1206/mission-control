@@ -42,11 +42,12 @@ export default async function LoansPage() {
     return false
   }).length
 
+  // DB query returns Record<string,unknown>[] — cast to Loan[]/Property[] as shape is guaranteed by the SQL schema
   return (
     <LoansDashboard
-      initialLoans={loans}
-      properties={properties}
-      holdingCompanies={holdingCompanies as typeof HOLDING_COMPANIES[number][]}
+      initialLoans={loans as unknown as Parameters<typeof LoansDashboard>[0]['initialLoans']}
+      properties={properties as unknown as Parameters<typeof LoansDashboard>[0]['properties']}
+      holdingCompanies={(holdingCompanies as unknown) as Parameters<typeof LoansDashboard>[0]['holdingCompanies']}
       stats={{ totalMonthly, totalBalance, pastDueCount, dueSoonCount, totalCount: loans.length }}
     />
   )

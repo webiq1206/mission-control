@@ -87,7 +87,8 @@ function AssetsContent() {
     byEntity[key].push(a)
   }
 
-  const sortedEntities = ENTITIES.map(e => e.label).filter(label => byEntity[label])
+  // Cast to string[] — ENTITIES labels are a const union but filter result is always string at runtime
+  const sortedEntities = (ENTITIES.map(e => e.label) as string[]).filter(label => byEntity[label])
   const extraEntities = Object.keys(byEntity).filter(k => !sortedEntities.includes(k))
   const allEntityKeys = [...sortedEntities, ...extraEntities]
 

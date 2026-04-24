@@ -407,7 +407,8 @@ export function LoansDashboard({
                   </td>
                   <td style={{ padding: '10px 12px' }}>{loan.company_name || loan.holding_company_id}</td>
                   <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{currencyFormatter.format(loan.monthly_payment || 0)} <span style={{fontSize: 9, color: 'var(--text-muted)'}}>{percentageFormatter.format(loan.interest_rate || 0)}</span></td>
-                  <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{dayFormatter.format(loan.due_day)}</td>
+                  {/* due_day is number|null — guard null before formatting */}
+                  <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{loan.due_day != null ? dayFormatter.format(loan.due_day) : '—'}</td>
                   <td style={{ padding: '10px 12px' }}>{getLoanAlertBadge(loan)}</td>
                   <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
                     {loan.last_payment_date ? format(new Date(loan.last_payment_date), 'MMM d, yyyy') : '—'}
