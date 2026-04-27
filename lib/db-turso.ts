@@ -51,7 +51,29 @@ export class TursoDb {
   }
 
   async run(sql: string, ...args: unknown[]): Promise<{ changes: number; lastInsertRowid: number }> {
-    const result = await this.client.execute({ sql, args: args as never[] })
+    // Auto-detect named-param style: if called with a single plain object and SQL has @params,
+    // convert @name -> ? and extract values in order (matches better-sqlite3 named-param behavior)
+    let finalSql = sql
+    let finalArgs: unknown[] = args
+    if (
+      args.length === 1 &&
+      args[0] !== null &&
+      typeof args[0] === 'object' &&
+      !Array.isArray(args[0]) &&
+      /@\w+/.test(sql)
+    ) {
+      const params = args[0] as Record<string, unknown>
+      const positional: unknown[] = []
+      finalSql = sql.replace(/@(\w+)/g, (_m, name) => {
+        const val = params[name]
+        positional.push(val === undefined ? null : val)
+        return '?'
+      })
+      finalArgs = positional
+    }
+    // Null-coerce any remaining undefined values
+    const safeArgs = finalArgs.map(a => (a === undefined ? null : a))
+    const result = await this.client.execute({ sql: finalSql, args: safeArgs as never[] })
     return {
       changes: result.rowsAffected,
       lastInsertRowid: Number(result.lastInsertRowid ?? 0),
