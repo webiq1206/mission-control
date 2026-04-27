@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, parseJsonArrayFields } from '@/lib/db'
+import { getUniversalDb, parseJsonArrayFields } from '@/lib/db-universal'
 import { requireAuth } from '../middleware'
 import { nanoid } from 'nanoid'
 
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const propertyId = req.nextUrl.searchParams.get('property_id')
   const holdingCompanyId = req.nextUrl.searchParams.get('holding_company_id')
   const status = req.nextUrl.searchParams.get('status')
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ')
   sql += ' ORDER BY ip.expiration_date'
 
-  const rawPolicies = db.prepare(sql).all(...params) as Record<string, unknown>[]
+  const rawPolicies = await db.all(sql, ...params) as Record<string, unknown>[]
   const policies = parseJsonArrayFields(rawPolicies, ['additional_insured'])
   return NextResponse.json(policies)
 }
@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
   }
 
   const id = body.id || nanoid()
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO insurance_policies
       (id, property_id, holding_company_id, coverage_type, provider,
        policy_number, premium_amount, premium_frequency, effective_date,
@@ -75,8 +75,7 @@ export async function POST(req: NextRequest) {
       drive_doc_url=excluded.drive_doc_url,
       notes=excluded.notes, status=excluded.status,
       updated_at=CURRENT_TIMESTAMP
-  `).run(
-    id,
+  `, id,
     body.property_id || null,
     body.holding_company_id,
     body.coverage_type || null,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 export async function GET(
@@ -10,8 +10,8 @@ export async function GET(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
-  const idea = db.prepare('SELECT * FROM ideas WHERE id = ?').get(id)
+  const db = await getUniversalDb()
+  const idea = await db.get('SELECT * FROM ideas WHERE id = ?', id)
 
   if (!idea) {
     return NextResponse.json({ error: 'Idea not found' }, { status: 404 })
@@ -28,10 +28,10 @@ export async function PATCH(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
-  const existing = db.prepare('SELECT * FROM ideas WHERE id = ?').get(id)
+  const existing = await db.get('SELECT * FROM ideas WHERE id = ?', id)
   if (!existing) {
     return NextResponse.json({ error: 'Idea not found' }, { status: 404 })
   }
@@ -59,8 +59,8 @@ export async function PATCH(
   }
 
   values.push(id)
-  db.prepare(`UPDATE ideas SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  await db.run(`UPDATE ideas SET ${sets.join(', ')} WHERE id = ?`, ...values)
 
-  const updated = db.prepare('SELECT * FROM ideas WHERE id = ?').get(id)
+  const updated = await db.get('SELECT * FROM ideas WHERE id = ?', id)
   return NextResponse.json({ ok: true, idea: updated })
 }

@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, safeJsonArray } from '@/lib/db'
+import { getUniversalDb, safeJsonArray } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -24,8 +24,8 @@ export async function GET(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
-  const row = db.prepare('SELECT * FROM bmh_deals WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  const db = await getUniversalDb()
+  const row = await db.get('SELECT * FROM bmh_deals WHERE id = ?', id) as Record<string, unknown> | undefined
 
   if (!row) {
     return NextResponse.json({ error: 'Deal not found' }, { status: 404 })
@@ -47,7 +47,7 @@ export async function PUT(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json() as { stage: number; clint_context?: boolean }
 
   const newStage = body.stage
@@ -65,22 +65,22 @@ export async function PUT(
   }
 
   // Verify the deal exists before updating
-  const existing = db.prepare('SELECT id FROM bmh_deals WHERE id = ?').get(id)
+  const existing = await db.get('SELECT id FROM bmh_deals WHERE id = ?', id)
   if (!existing) {
     return NextResponse.json({ error: 'Deal not found' }, { status: 404 })
   }
 
   // Advance stage and record timestamp for stale-detection
-  db.prepare(`
+  await db.run(`
     UPDATE bmh_deals
     SET pipeline_stage = ?,
         last_stage_advance_at = datetime('now'),
         updated_at = datetime('now')
     WHERE id = ?
-  `).run(newStage, id)
+  `, newStage, id)
 
   // Return the updated deal
-  const updated = db.prepare('SELECT * FROM bmh_deals WHERE id = ?').get(id) as Record<string, unknown>
+  const updated = await db.get('SELECT * FROM bmh_deals WHERE id = ?', id) as Record<string, unknown>
   return NextResponse.json({
     ...updated,
     signals:          safeJsonArray(updated.signals),

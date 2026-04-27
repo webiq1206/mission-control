@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // For Replit, listen on the PORT env var
+  ...(process.env.PORT ? { env: { PORT: process.env.PORT } } : {}),
   serverExternalPackages: ['puppeteer'],
   experimental: {
     staleTimes: {

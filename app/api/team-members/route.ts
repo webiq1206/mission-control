@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 
 export async function GET(req: NextRequest) {
-  const db = getDb()
+  const db = await getUniversalDb()
   try {
-    const members = db.prepare('SELECT * FROM team_members ORDER BY name').all()
+    const members = await db.all('SELECT * FROM team_members ORDER BY name')
     return NextResponse.json(members)
   } catch {
     return NextResponse.json([])

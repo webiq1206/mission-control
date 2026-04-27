@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -23,10 +23,10 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
 
   // LEFT JOIN so stages with zero deals still appear in the result
-  const stages = db.prepare(`
+  const stages = await db.all(`
     SELECT
       s.stage_number,
       s.label,
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     LEFT JOIN bmh_deals d ON d.pipeline_stage = s.stage_number
     GROUP BY s.stage_number
     ORDER BY s.stage_number ASC
-  `).all() as StageWithCount[]
+  `) as StageWithCount[]
 
   return NextResponse.json(stages)
 }

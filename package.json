@@ -5,12 +5,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p ${PORT:-3000}",
     "lint": "eslint"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
+    "@libsql/client": "^0.17.3",
     "better-sqlite3": "^12.8.0",
     "date-fns": "^4.1.0",
     "geist": "^1.7.0",

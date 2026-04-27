@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 
 // Next.js 15: params is a Promise — must be awaited before use
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const db = getDb()
-  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any
+  const db = await getUniversalDb()
+  const asset = await db.get('SELECT * FROM assets WHERE id = ?', id) as any
   if (!asset) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json({
     ...asset,
@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
   const fields = ['title','description','url','file_path','status','tags','category','entity']
   const updates: string[] = []
@@ -32,14 +32,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   updates.push('updated_at = CURRENT_TIMESTAMP')
   vals.push(id)
 
-  db.prepare(`UPDATE assets SET ${updates.join(', ')} WHERE id = ?`).run(...vals)
-  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any
+  await db.run(`UPDATE assets SET ${updates.join(', ')} WHERE id = ?`, ...vals)
+  const asset = await db.get('SELECT * FROM assets WHERE id = ?', id) as any
   return NextResponse.json({ asset, success: true })
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const db = getDb()
-  db.prepare('DELETE FROM assets WHERE id = ?').run(id)
+  const db = await getUniversalDb()
+  await db.run('DELETE FROM assets WHERE id = ?', id)
   return NextResponse.json({ success: true })
 }

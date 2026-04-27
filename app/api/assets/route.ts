@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 
 export async function GET(req: NextRequest) {
-  const db = getDb()
+  const db = await getUniversalDb()
   const { searchParams } = new URL(req.url)
   const entity = searchParams.get('entity')
   const category = searchParams.get('category')
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 
   query += ' ORDER BY created_at DESC'
 
-  const assets = db.prepare(query).all(...params)
+  const assets = await db.all(query, ...params)
 
   // Parse tags JSON
   const parsed = assets.map((a: any) => ({
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
   const {
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   const tagsJson = JSON.stringify(Array.isArray(tags) ? tags : [])
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO assets (id, entity, category, title, description, url, file_path, created_by, status, tags)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
@@ -54,29 +54,28 @@ export async function POST(req: NextRequest) {
       description=excluded.description, url=excluded.url, file_path=excluded.file_path,
       created_by=excluded.created_by, status=excluded.status, tags=excluded.tags,
       updated_at=CURRENT_TIMESTAMP
-  `).run(id, entity, category, title, description || null, url || null, file_path || null, created_by || null, status, tagsJson)
+  `, id, entity, category, title, description || null, url || null, file_path || null, created_by || null, status, tagsJson)
 
   // Link to task if provided
   if (task_id) {
     const assetUrl = `/assets#${id}`
-    db.prepare(`
+    await db.run(`
       UPDATE tasks SET deliverable_url = ?, deliverable_asset_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(assetUrl, id, task_id)
+    `, assetUrl, id, task_id)
   }
 
   // Log activity
-  db.prepare(`
+  await db.run(`
     INSERT INTO activity (agent, entity, action, detail, tags)
     VALUES (?, ?, ?, ?, ?)
-  `).run(
-    created_by || 'system',
+  `, created_by || 'system',
     entity,
     `Asset registered: ${title}`,
     `Category: ${category} | File: ${file_path || url || 'N/A'}`,
     JSON.stringify(['asset', category])
   )
 
-  const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any
+  const asset = await db.get('SELECT * FROM assets WHERE id = ?', id) as any
   return NextResponse.json({ asset, success: true })
 }

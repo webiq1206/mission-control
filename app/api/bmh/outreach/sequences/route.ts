@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -19,12 +19,10 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
 
   // Return all sequences sorted by most recently updated first
-  const sequences = db.prepare(
-    'SELECT * FROM bmh_outreach_sequences ORDER BY updated_at DESC'
-  ).all()
+  const sequences = await db.all('SELECT * FROM bmh_outreach_sequences ORDER BY updated_at DESC')
 
   return NextResponse.json(sequences)
 }

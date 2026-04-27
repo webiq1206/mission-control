@@ -15,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -47,24 +47,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'phone or email is required' }, { status: 400 })
   }
 
-  const db = getDb()
+  const db = await getUniversalDb()
 
   // Generate a deterministic-ish ID: BMH-LEAD-timestamp-random
   const id = `BMH-LEAD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
 
   // Insert into bmh_leads
-  db.prepare(`
+  await db.run(`
     INSERT INTO bmh_leads (id, address, phone, email, source, notes, status)
     VALUES (?, ?, ?, ?, ?, ?, 'received')
-  `).run(id, address, phone || null, email || null, source, notes || null)
+  `, id, address, phone || null, email || null, source, notes || null)
 
   // Log to activity_feed (if table exists — graceful fallback if not)
   try {
-    db.prepare(`
+    await db.run(`
       INSERT INTO activity_feed (id, entity, type, summary, created_at)
       VALUES (?, 'BMH', 'lead_received', ?, datetime('now'))
-    `).run(
-      `AF-BMH-LEAD-${Date.now()}`,
+    `, `AF-BMH-LEAD-${Date.now()}`,
       `New BMH lead received: ${address}`
     )
   } catch {
@@ -85,7 +84,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const url = new URL(req.url)
 
   // Optional status filter: received | reviewed | converted | dead
@@ -99,17 +98,15 @@ export async function GET(req: NextRequest) {
     ? [status, limit, offset]
     : [limit, offset]
 
-  const leads = db.prepare(`
+  const leads = await db.all(`
     SELECT * FROM bmh_leads
     ${whereClause}
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
-  `).all(...params)
+  `, ...params)
 
   // Total count for pagination
-  const totalRow = db.prepare(
-    `SELECT COUNT(*) as cnt FROM bmh_leads ${whereClause}`
-  ).get(...(status ? [status] : [])) as { cnt: number }
+  const totalRow = await db.get(`SELECT COUNT(*) as cnt FROM bmh_leads ${whereClause}`, ...(status ? [status] : [])) as { cnt: number }
 
   return NextResponse.json({
     leads,

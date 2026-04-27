@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 import { ENTITIES } from '@/lib/entities'
 import { format } from 'date-fns'
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (auth) return auth
 
   const body = await req.json()
-  const db = getDb()
+  const db = await getUniversalDb()
   const date = format(new Date(), 'MMMM d, yyyy')
 
   const entityFilter =
@@ -30,11 +30,9 @@ export async function POST(req: NextRequest) {
   let agents: ReportAgent[] | undefined
 
   if (body.sections?.priorities) {
-    const rows = db
-      .prepare(
-        `SELECT * FROM priorities WHERE status != 'completed' ORDER BY sort_order`
-      )
-      .all() as Record<string, unknown>[]
+    const rows = await db.all(
+      `SELECT * FROM priorities WHERE status != 'completed' ORDER BY sort_order`
+    ) as Record<string, unknown>[]
 
     priorities = rows
       .filter(
@@ -55,18 +53,14 @@ export async function POST(req: NextRequest) {
   if (body.sections?.tasks) {
     tasksByEntity = {}
     for (const entity of entityFilter) {
-      const rows = db
-        .prepare(
-          `SELECT * FROM tasks
-           WHERE (entity = ? OR entity = ?)
-             AND status NOT IN ('completed', 'backlog')
-           ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END
-           LIMIT 15`
-        )
-        .all(entity, entity.toLowerCase().replace(/\s+/g, '-')) as Record<
-        string,
-        unknown
-      >[]
+      const rows = await db.all(
+        `SELECT * FROM tasks
+         WHERE (entity = ? OR entity = ?)
+           AND status NOT IN ('completed', 'backlog')
+         ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END
+         LIMIT 15`,
+        entity, entity.toLowerCase().replace(/\s+/g, '-')
+      ) as Record<string, unknown>[]
 
       if (rows.length > 0) {
         tasksByEntity[entity] = rows.map(t => ({
@@ -81,11 +75,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.sections?.approvals) {
-    const rows = db
-      .prepare(
-        `SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at ASC`
-      )
-      .all() as Record<string, unknown>[]
+    const rows = await db.all(
+      `SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at ASC`
+    ) as Record<string, unknown>[]
 
     if (rows.length > 0) {
       approvals = rows.map(a => ({
@@ -100,9 +92,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.sections?.agents) {
-    const rows = db
-      .prepare('SELECT * FROM agent_heartbeats')
-      .all() as Record<string, unknown>[]
+    const rows = await db.all('SELECT * FROM agent_heartbeats') as Record<string, unknown>[]
 
     agents = rows.map(a => {
       const minsAgo = a.last_seen

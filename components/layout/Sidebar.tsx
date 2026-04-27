@@ -6,7 +6,8 @@ import { onApprovalAction } from '@/lib/approval-events'
 
 const NAV = [
   { href: '/',           label: 'Overview'    },
-  { href: '/kanban',     label: 'Kanban'      },
+  { href: '/inbox',      label: "Jared's Inbox" },
+  { href: '/tasks',      label: 'Tasks'       },
   { href: '/approvals',  label: 'Approvals'   },
   { href: '/agents',     label: 'Agents'      },
   { href: '/entities',   label: 'Entities'    },
@@ -42,7 +43,7 @@ const LLC_NAV = [
 
 export function Sidebar() {
   const path = usePathname()
-  const [counts, setCounts] = useState({ approvals: 0, ideas: 0 })
+  const [counts, setCounts] = useState({ approvals: 0, ideas: 0, inbox: 0 })
   const [emergencyStop, setEmergencyStop] = useState(false)
   // BMH deal sourcing section collapse state — closed by default
   const [bmhOpen, setBmhOpen] = useState(false)
@@ -52,15 +53,20 @@ export function Sidebar() {
   useEffect(() => {
     async function load() {
       try {
-        const [sys, apr, ideas] = await Promise.all([
+        const [sys, apr, ideas, inboxData] = await Promise.all([
           fetch('/api/system', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
           fetch('/api/approvals', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
           fetch('/api/ideas?status=new', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+          fetch('/api/inbox/count', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
         ])
         setEmergencyStop(sys.emergency_stop === 'true')
+
+        const pendingDecisions = inboxData?.pending_decisions ?? 0
+
         setCounts({
-          approvals: Array.isArray(apr) ? apr.filter((a: {status: string}) => a.status === 'pending').length : 0,
+          approvals: pendingDecisions,
           ideas: Array.isArray(ideas) ? ideas.length : 0,
+          inbox: inboxData?.total ?? 0,
         })
       } catch { /* ignore fetch errors during SSR */ }
     }
@@ -133,9 +139,12 @@ export function Sidebar() {
           {NAV.map(item => {
             const active = path === item.href || (item.href !== '/' && path.startsWith(item.href))
             const badge =
+              item.label === "Jared's Inbox" && counts.inbox > 0 ? counts.inbox :
               item.label === 'Approvals' && counts.approvals > 0 ? counts.approvals :
               item.label === 'Ideas' && counts.ideas > 0 ? counts.ideas : null
-            const badgeColor = item.label === 'Ideas' ? 'var(--amber)' : 'var(--orange)'
+            const badgeColor =
+              item.label === "Jared's Inbox" ? 'var(--red)' :
+              item.label === 'Ideas' ? 'var(--amber)' : 'var(--orange)'
 
             return (
               <Link

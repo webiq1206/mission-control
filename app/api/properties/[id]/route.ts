@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, parseJsonArrayFields } from '@/lib/db'
+import { getUniversalDb, parseJsonArrayFields } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 export async function GET(
@@ -10,24 +10,18 @@ export async function GET(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  const rawProperty = db.prepare('SELECT * FROM properties WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  const rawProperty = await db.get('SELECT * FROM properties WHERE id = ?', id) as Record<string, unknown> | undefined
   if (!rawProperty) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const property = parseJsonArrayFields(rawProperty, ['additional_insured'])
 
-  const loans = db.prepare(
-    'SELECT * FROM loans WHERE property_id = ? ORDER BY due_day, lender'
-  ).all(id)
+  const loans = await db.all('SELECT * FROM loans WHERE property_id = ? ORDER BY due_day, lender', id)
 
-  const rawInsurance = db.prepare(
-    'SELECT * FROM insurance_policies WHERE property_id = ? ORDER BY expiration_date'
-  ).all(id) as Record<string, unknown>[]
+  const rawInsurance = await db.all('SELECT * FROM insurance_policies WHERE property_id = ? ORDER BY expiration_date', id) as Record<string, unknown>[]
   const insurance = parseJsonArrayFields(rawInsurance, ['additional_insured'])
 
-  const holdingCompany = db.prepare(
-    'SELECT * FROM holding_companies WHERE id = ?'
-  ).get(rawProperty.holding_company_id)
+  const holdingCompany = await db.get('SELECT * FROM holding_companies WHERE id = ?', rawProperty.holding_company_id)
 
   return NextResponse.json({ property, loans, insurance, holdingCompany })
 }
@@ -41,9 +35,9 @@ export async function PATCH(
 
   const { id } = await params
   const body = await req.json()
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  const existing = db.prepare('SELECT id FROM properties WHERE id = ?').get(id)
+  const existing = await db.get('SELECT id FROM properties WHERE id = ?', id)
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const fields = [
@@ -67,7 +61,7 @@ export async function PATCH(
   updates.push('updated_at = CURRENT_TIMESTAMP')
   values.push(id)
 
-  db.prepare(`UPDATE properties SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+  await db.run(`UPDATE properties SET ${updates.join(', ')} WHERE id = ?`, ...values)
   return NextResponse.json({ ok: true })
 }
 
@@ -79,7 +73,7 @@ export async function DELETE(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
-  db.prepare('DELETE FROM properties WHERE id = ?').run(id)
+  const db = await getUniversalDb()
+  await db.run('DELETE FROM properties WHERE id = ?', id)
   return NextResponse.json({ ok: true })
 }

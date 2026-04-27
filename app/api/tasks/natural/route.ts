@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 const SLUG_TO_NAME: Record<string, string> = {
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
   if (!body.text || !body.entity) {
@@ -66,18 +66,18 @@ export async function POST(req: NextRequest) {
   const id = `TSK-NL-${Date.now()}`
   const now = new Date().toISOString()
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO tasks (id, title, entity, status, priority, assigned_agent, description, source, created_at, updated_at, last_activity_at)
     VALUES (?, ?, ?, 'backlog', ?, ?, ?, 'natural_language', ?, ?, ?)
-  `).run(id, title, entityName, priority, assignedAgent, body.text, now, now, now)
+  `, id, title, entityName, priority, assignedAgent, body.text, now, now, now)
 
   // Log to activity
-  db.prepare(`
+  await db.run(`
     INSERT INTO activity (agent, entity, action, detail, task_id, tags)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run('hank', entityName, 'task_created', `Created: ${title}`, id, JSON.stringify(['task', 'natural_language', assignedAgent]))
+  `, 'hank', entityName, 'task_created', `Created: ${title}`, id, JSON.stringify(['task', 'natural_language', assignedAgent]))
 
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
+  const task = await db.get('SELECT * FROM tasks WHERE id = ?', id)
 
   return NextResponse.json({ ok: true, task })
 }

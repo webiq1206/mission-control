@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, parseJsonArrayFields } from '@/lib/db'
+import { getUniversalDb, parseJsonArrayFields } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 export async function GET(
@@ -10,15 +10,15 @@ export async function GET(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  const rawPolicy = db.prepare(`
+  const rawPolicy = await db.get(`
     SELECT ip.*, p.address as property_address, h.name as company_name
     FROM insurance_policies ip
     LEFT JOIN properties p ON ip.property_id = p.id
     LEFT JOIN holding_companies h ON ip.holding_company_id = h.id
     WHERE ip.id = ?
-  `).get(id) as Record<string, unknown> | undefined
+  `, id) as Record<string, unknown> | undefined
 
   if (!rawPolicy) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const policy = parseJsonArrayFields(rawPolicy, ['additional_insured'])
@@ -34,9 +34,9 @@ export async function PATCH(
 
   const { id } = await params
   const body = await req.json()
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  const existing = db.prepare('SELECT id FROM insurance_policies WHERE id = ?').get(id)
+  const existing = await db.get('SELECT id FROM insurance_policies WHERE id = ?', id)
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const fields = [
@@ -61,7 +61,7 @@ export async function PATCH(
   updates.push('updated_at = CURRENT_TIMESTAMP')
   values.push(id)
 
-  db.prepare(`UPDATE insurance_policies SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+  await db.run(`UPDATE insurance_policies SET ${updates.join(', ')} WHERE id = ?`, ...values)
   return NextResponse.json({ ok: true })
 }
 
@@ -73,6 +73,7 @@ export async function DELETE(
   if (auth) return auth
 
   const { id } = await params
-  getDb().prepare('DELETE FROM insurance_policies WHERE id = ?').run(id)
+  const db = await getUniversalDb()
+  await db.run('DELETE FROM insurance_policies WHERE id = ?', id)
   return NextResponse.json({ ok: true })
 }

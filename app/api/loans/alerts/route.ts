@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 /**
@@ -15,10 +15,10 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
 
   // Loans marked past_due explicitly
-  const pastDue = db.prepare(`
+  const pastDue = await db.all(`
     SELECT l.*, p.address as property_address, h.name as company_name,
            'past_due' as alert_type,
            'Payment overdue' as alert_message
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
     WHERE l.status = 'active'
       AND l.payment_status = 'past_due'
     ORDER BY l.lender
-  `).all() as Record<string, unknown>[]
+  `) as Record<string, unknown>[]
 
   // Loans due within 5 days (using due_day as day-of-month integer/text)
   // We compute current day and check if due_day is within next 5 days
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Get all active loans with due_day set, not already past_due, not paid_this_month
-  const activeLoansDue = db.prepare(`
+  const activeLoansDue = await db.all(`
     SELECT l.*, p.address as property_address, h.name as company_name
     FROM loans l
     LEFT JOIN properties p ON l.property_id = p.id
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
       AND l.payment_status NOT IN ('past_due', 'paid_this_month')
       AND l.due_day IS NOT NULL
     ORDER BY l.due_day, l.lender
-  `).all() as Record<string, unknown>[]
+  `) as Record<string, unknown>[]
 
   const dueSoon = activeLoansDue.filter(loan => {
     const dueDay = parseInt(String(loan.due_day), 10)
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
   }))
 
   // Loans maturing within 90 days
-  const maturingSoon = db.prepare(`
+  const maturingSoon = await db.all(`
     SELECT l.*, p.address as property_address, h.name as company_name,
            'maturity' as alert_type,
            'Loan maturing within 90 days' as alert_message,
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
       AND l.maturity_date IS NOT NULL
       AND l.maturity_date <= date('now', '+90 days')
     ORDER BY l.maturity_date
-  `).all() as Record<string, unknown>[]
+  `) as Record<string, unknown>[]
 
   // Combine and deduplicate (a loan could appear in multiple categories)
   const seenIds = new Set<string>()

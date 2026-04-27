@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 import { sendDeadMansSwitchAlert } from '@/lib/telegram'
 
@@ -7,8 +7,8 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
-  const rows = db.prepare('SELECT * FROM system_state').all() as { key: string; value: string }[]
+  const db = await getUniversalDb()
+  const rows = await db.all('SELECT * FROM system_state') as { key: string; value: string }[]
   const state: Record<string, string> = Object.fromEntries(rows.map(r => [r.key, r.value]))
 
   if (state.dead_mans_switch_enabled !== 'true') {
@@ -26,11 +26,11 @@ export async function POST(req: NextRequest) {
   if (hoursSince > switchHours) {
     await sendDeadMansSwitchAlert(hoursSince)
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO system_state (key, value, updated_at, updated_by)
       VALUES ('dead_mans_switch_last_alert', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system')
       ON CONFLICT(key) DO UPDATE SET value = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-    `).run()
+    `)
 
     return NextResponse.json({ ok: true, triggered: true, hours_since: hoursSince })
   }

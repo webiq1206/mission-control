@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -15,10 +15,10 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
 
   // Return all sources — pipeline scripts write to this table after each run
-  const sources = db.prepare('SELECT * FROM bmh_data_sources ORDER BY label ASC').all()
+  const sources = await db.all('SELECT * FROM bmh_data_sources ORDER BY label ASC')
 
   return NextResponse.json({ sources })
 }

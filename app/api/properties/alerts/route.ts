@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 import type { PropertyAlert } from '@/lib/types'
 
@@ -7,18 +7,18 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const now = new Date()
   const alerts: PropertyAlert[] = []
 
-  const loans = db.prepare(`
+  const loans = await db.all(`
     SELECT l.*, p.address as property_address, h.name as company_name
     FROM loans l
     LEFT JOIN properties p ON l.property_id = p.id
     LEFT JOIN holding_companies h ON l.holding_company_id = h.id
     WHERE l.status = 'active' AND l.maturity_date IS NOT NULL
     ORDER BY l.maturity_date
-  `).all() as Record<string, unknown>[]
+  `) as Record<string, unknown>[]
 
   for (const loan of loans) {
     const maturity = new Date(loan.maturity_date as string)
@@ -42,14 +42,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const policies = db.prepare(`
+  const policies = await db.all(`
     SELECT ip.*, p.address as property_address, h.name as company_name
     FROM insurance_policies ip
     LEFT JOIN properties p ON ip.property_id = p.id
     LEFT JOIN holding_companies h ON ip.holding_company_id = h.id
     WHERE ip.status = 'active' AND ip.expiration_date IS NOT NULL
     ORDER BY ip.expiration_date
-  `).all() as Record<string, unknown>[]
+  `) as Record<string, unknown>[]
 
   for (const policy of policies) {
     const expiry = new Date(policy.expiration_date as string)

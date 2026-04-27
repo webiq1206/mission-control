@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, safeJsonArray } from '@/lib/db'
+import { getUniversalDb, safeJsonArray } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const { searchParams } = new URL(req.url)
 
   const priority = searchParams.get('priority')
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
   query += ` ORDER BY ${sortMap[sort] || sortMap.mss_desc} LIMIT ?`
   params.push(limit)
 
-  const rows = db.prepare(query).all(...params) as Record<string, unknown>[]
+  const rows = await db.all(query, ...params) as Record<string, unknown>[]
 
   // Parse JSON text columns into actual arrays before returning
   const deals = rows.map(row => ({

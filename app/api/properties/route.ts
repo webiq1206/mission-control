@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, parseJsonArrayFields } from '@/lib/db'
+import { getUniversalDb, parseJsonArrayFields } from '@/lib/db-universal'
 import { requireAuth } from '../middleware'
 import { nanoid } from 'nanoid'
 
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const holdingCompany = req.nextUrl.searchParams.get('holding_company')
   const status = req.nextUrl.searchParams.get('status')
 
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ')
   sql += ' ORDER BY holding_company_id, address'
 
-  const rawProperties = db.prepare(sql).all(...params) as Record<string, unknown>[]
+  const rawProperties = await db.all(sql, ...params) as Record<string, unknown>[]
   const properties = parseJsonArrayFields(rawProperties, ['additional_insured'])
   return NextResponse.json(properties)
 }
@@ -42,9 +42,9 @@ export async function POST(req: NextRequest) {
   }
 
   const id = body.id || nanoid()
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO properties
       (id, holding_company_id, address, city, state, zip, property_type, notes,
        bedrooms, bathrooms, sq_ft, year_built, estimated_value,
@@ -60,8 +60,7 @@ export async function POST(req: NextRequest) {
       additional_insured=excluded.additional_insured,
       status=excluded.status, drive_folder_url=excluded.drive_folder_url,
       updated_at=CURRENT_TIMESTAMP
-  `).run(
-    id,
+  `, id,
     body.holding_company_id,
     body.address,
     body.city || null,

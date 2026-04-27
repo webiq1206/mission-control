@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, parseJsonArrayFields } from '@/lib/db'
+import { getUniversalDb, parseJsonArrayFields } from '@/lib/db-universal'
 import { requireAuth } from '../middleware'
 import { nanoid } from 'nanoid'
 
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const { searchParams } = new URL(req.url)
   const entity = searchParams.get('entity')
   const status = searchParams.get('status')
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   query += " ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 END, updated_at DESC LIMIT ?"
   params.push(limit)
 
-  const rawTasks = db.prepare(query).all(...params) as Record<string, unknown>[]
+  const rawTasks = await db.all(query, ...params) as Record<string, unknown>[]
   const tasks = parseJsonArrayFields(rawTasks, ['dependencies', 'tags'])
   return NextResponse.json(tasks)
 }
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db   = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
   const task = {
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     last_activity_at: new Date().toISOString(),
   }
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO tasks (id,title,entity,status,priority,assigned_agent,description,
       objective,dod,expected_output,dependencies,tags,source,due_at,last_activity_at)
     VALUES (@id,@title,@entity,@status,@priority,@assigned_agent,@description,
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
       objective=excluded.objective, dod=excluded.dod, expected_output=excluded.expected_output,
       dependencies=excluded.dependencies, tags=excluded.tags,
       updated_at=CURRENT_TIMESTAMP, last_activity_at=excluded.last_activity_at
-  `).run(task)
+  `, task)
 
   return NextResponse.json({ ok: true, id: task.id })
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../middleware'
 import { nanoid } from 'nanoid'
 
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const { searchParams } = new URL(req.url)
   const entity = searchParams.get('entity')
   const status = searchParams.get('status')
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   query += ' ORDER BY created_at DESC LIMIT ?'
   params.push(limit)
 
-  const ideas = db.prepare(query).all(...params)
+  const ideas = await db.all(query, ...params)
   return NextResponse.json(ideas)
 }
 
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
   if (!body.title) {
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
     priority:     body.priority || 'medium',
   }
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO ideas (id, entity, title, description, context, objective, next_steps,
       submitted_by, assigned_to, status, priority)
     VALUES (@id, @entity, @title, @description, @context, @objective, @next_steps,
@@ -63,13 +63,12 @@ export async function POST(req: NextRequest) {
       context=excluded.context, objective=excluded.objective, next_steps=excluded.next_steps,
       submitted_by=excluded.submitted_by, assigned_to=excluded.assigned_to,
       status=excluded.status, priority=excluded.priority
-  `).run(idea)
+  `, idea)
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO activity (agent, entity, action, detail, tags)
     VALUES (?, ?, 'idea_submitted', ?, ?)
-  `).run(
-    idea.submitted_by,
+  `, idea.submitted_by,
     idea.entity || 'Global',
     `New idea: ${idea.title}`,
     JSON.stringify(['idea', 'submitted'])

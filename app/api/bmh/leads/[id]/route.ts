@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,8 +42,8 @@ export async function GET(
     return NextResponse.json({ error: 'Lead ID required' }, { status: 400 })
   }
 
-  const db = getDb()
-  const lead = db.prepare('SELECT * FROM bmh_leads WHERE id = ?').get(id) as BmhLead | undefined
+  const db = await getUniversalDb()
+  const lead = await db.get('SELECT * FROM bmh_leads WHERE id = ?', id) as BmhLead | undefined
 
   if (!lead) {
     return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
@@ -52,9 +52,7 @@ export async function GET(
   // If lead has been converted to a deal, attach deal summary
   let dealSummary = null
   if (lead.converted_deal_id) {
-    const deal = db.prepare(
-      'SELECT id, address, pipeline_stage, priority, mss FROM bmh_deals WHERE id = ?'
-    ).get(lead.converted_deal_id) as Record<string, unknown> | undefined
+    const deal = await db.get('SELECT id, address, pipeline_stage, priority, mss FROM bmh_deals WHERE id = ?', lead.converted_deal_id) as Record<string, unknown> | undefined
 
     if (deal) {
       dealSummary = {

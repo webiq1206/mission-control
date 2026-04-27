@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../middleware'
 
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const { searchParams } = new URL(req.url)
   const entity = searchParams.get('entity')
   const status = searchParams.get('status')
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 
   query += ' ORDER BY last_updated DESC'
 
-  const campaigns = db.prepare(query).all(...params)
+  const campaigns = await db.all(query, ...params)
   return NextResponse.json(campaigns)
 }
 
@@ -33,10 +33,10 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
-  db.prepare(`
+  await db.runNamed(`
     INSERT INTO ad_campaigns
       (id, entity, platform, account_id, account_name, campaign_name, status, objective,
        spend, impressions, reach, clicks, ctr, cpc, leads, cpl, conversions, roas, frequency,
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       date_start=excluded.date_start,
       date_stop=excluded.date_stop,
       last_updated=excluded.last_updated
-  `).run({
+  `, {
     id: body.id || `camp-${Date.now()}`,
     entity: body.entity,
     platform: body.platform || 'meta',

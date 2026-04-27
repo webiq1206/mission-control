@@ -53,3 +53,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# SQLite database files (use persistent Replit storage or Turso in production)
+mc.db
+mc.db-*
+*.db-shm
+*.db-wal
+mission-control.db

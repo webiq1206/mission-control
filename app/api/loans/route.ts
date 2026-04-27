@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../middleware'
 import { nanoid } from 'nanoid'
 
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
   const propertyId = req.nextUrl.searchParams.get('property_id')
   const holdingCompanyId = req.nextUrl.searchParams.get('holding_company_id')
   const entity = req.nextUrl.searchParams.get('entity')
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ')
   sql += ' ORDER BY l.due_day, l.lender'
 
-  const loans = db.prepare(sql).all(...params)
+  const loans = await db.all(sql, ...params)
   return NextResponse.json(loans)
 }
 
@@ -62,9 +62,9 @@ export async function POST(req: NextRequest) {
   }
 
   const id = body.id || nanoid()
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO loans
       (id, property_id, holding_company_id, lender, loan_type, payment_type,
        paid_from_account, collateral_address, payment_terms, principal_amount,
@@ -94,8 +94,7 @@ export async function POST(req: NextRequest) {
       last_payment_date=excluded.last_payment_date,
       last_payment_amount=excluded.last_payment_amount,
       updated_at=CURRENT_TIMESTAMP
-  `).run(
-    id,
+  `, id,
     body.property_id || null,
     body.holding_company_id,
     body.lender,
@@ -118,8 +117,7 @@ export async function POST(req: NextRequest) {
     body.status || 'active',
     body.payment_status || 'current',
     body.last_payment_date || null,
-    body.last_payment_amount ?? null,
-  )
+    body.last_payment_amount ?? null,)
 
   return NextResponse.json({ id, ok: true })
 }

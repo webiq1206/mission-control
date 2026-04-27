@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 export async function PATCH(
@@ -10,7 +10,7 @@ export async function PATCH(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
   const body = await req.json()
 
   const updates: string[] = []
@@ -28,7 +28,7 @@ export async function PATCH(
   updates.push("updated_at = datetime('now')")
   values.push(id)
 
-  db.prepare(`UPDATE ad_recommendations SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+  await db.run(`UPDATE ad_recommendations SET ${updates.join(', ')} WHERE id = ?`, ...values)
 
   return NextResponse.json({ ok: true })
 }

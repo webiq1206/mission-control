@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '../../middleware'
 
 export async function GET(
@@ -10,15 +10,15 @@ export async function GET(
   if (auth) return auth
 
   const { id } = await params
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  const loan = db.prepare(`
+  const loan = await db.get(`
     SELECT l.*, p.address as property_address, h.name as company_name
     FROM loans l
     LEFT JOIN properties p ON l.property_id = p.id
     LEFT JOIN holding_companies h ON l.holding_company_id = h.id
     WHERE l.id = ?
-  `).get(id)
+  `, id)
 
   if (!loan) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json(loan)
@@ -33,9 +33,9 @@ export async function PATCH(
 
   const { id } = await params
   const body = await req.json()
-  const db = getDb()
+  const db = await getUniversalDb()
 
-  const existing = db.prepare('SELECT id FROM loans WHERE id = ?').get(id)
+  const existing = await db.get('SELECT id FROM loans WHERE id = ?', id)
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const fields = [
@@ -62,7 +62,7 @@ export async function PATCH(
   updates.push('updated_at = CURRENT_TIMESTAMP')
   values.push(id)
 
-  db.prepare(`UPDATE loans SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+  await db.run(`UPDATE loans SET ${updates.join(', ')} WHERE id = ?`, ...values)
   return NextResponse.json({ ok: true })
 }
 
@@ -74,6 +74,7 @@ export async function DELETE(
   if (auth) return auth
 
   const { id } = await params
-  getDb().prepare('DELETE FROM loans WHERE id = ?').run(id)
+  const db = await getUniversalDb()
+  await db.run('DELETE FROM loans WHERE id = ?', id)
   return NextResponse.json({ ok: true })
 }

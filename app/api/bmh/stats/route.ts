@@ -16,7 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { requireAuth } from '@/app/api/middleware'
 
 export const dynamic = 'force-dynamic'
@@ -25,38 +25,36 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const db = getDb()
+  const db = await getUniversalDb()
 
   // Inbound leads received in last 30 days
-  const leadsRow = db.prepare(`
+  const leadsRow = await db.get(`
     SELECT COUNT(*) as cnt FROM bmh_leads
     WHERE created_at >= datetime('now', '-30 days')
-  `).get() as { cnt: number }
+  `) as { cnt: number }
 
   // All-time deal count
-  const totalDealsRow = db.prepare(
-    'SELECT COUNT(*) as cnt FROM bmh_deals'
-  ).get() as { cnt: number }
+  const totalDealsRow = await db.get('SELECT COUNT(*) as cnt FROM bmh_deals') as { cnt: number }
 
   // Priority A deals — explicitly labeled or MSS >= 10
-  const priorityARow = db.prepare(`
+  const priorityARow = await db.get(`
     SELECT COUNT(*) as cnt FROM bmh_deals
     WHERE priority = 'A' OR mss >= 10
-  `).get() as { cnt: number }
+  `) as { cnt: number }
 
   // Active pipeline: stages 1-7 (agent domain), with stage movement in last 7 days
   // OR already past stage 1 (shows persistent engagement)
-  const pipelineActiveRow = db.prepare(`
+  const pipelineActiveRow = await db.get(`
     SELECT COUNT(*) as cnt FROM bmh_deals
     WHERE pipeline_stage BETWEEN 1 AND 7
       AND (pipeline_stage > 1 OR last_stage_advance_at >= datetime('now', '-7 days'))
-  `).get() as { cnt: number }
+  `) as { cnt: number }
 
   // New inbound leads last 7 days
-  const newLeads7dRow = db.prepare(`
+  const newLeads7dRow = await db.get(`
     SELECT COUNT(*) as cnt FROM bmh_leads
     WHERE created_at >= datetime('now', '-7 days')
-  `).get() as { cnt: number }
+  `) as { cnt: number }
 
   return NextResponse.json({
     active_leads_30d:    leadsRow.cnt,

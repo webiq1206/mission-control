@@ -1,4 +1,4 @@
-import { getDb } from '@/lib/db'
+import { getUniversalDb } from '@/lib/db-universal'
 import { NextRequest } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -15,26 +15,24 @@ export async function GET(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
-      const db = getDb()
+      const db = await getUniversalDb()
 
       // Seed: last 30 non-heartbeat entries
-      const seed = db.prepare(
-        "SELECT * FROM activity WHERE action != 'heartbeat' ORDER BY id DESC LIMIT 30"
-      ).all().reverse()
+      const seedRows = await db.all("SELECT * FROM activity WHERE action != 'heartbeat' ORDER BY id DESC LIMIT 30")
+      const seed = seedRows.reverse()
       for (const row of seed) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(row)}\n\n`))
         lastId = Math.max(lastId, (row as Record<string, unknown>).id as number)
       }
 
       // Start past any heartbeat rows already in the table
-      const maxRow = db.prepare('SELECT MAX(id) as max_id FROM activity').get() as { max_id: number | null } | undefined
+      const maxRow = await db.get('SELECT MAX(id) as max_id FROM activity') as { max_id: number | null } | undefined
       if (maxRow?.max_id) lastId = Math.max(lastId, maxRow.max_id)
 
       const interval = setInterval(() => {
+        void (async () => {
         try {
-          const rows = db.prepare(
-            'SELECT * FROM activity WHERE id > ? ORDER BY id ASC'
-          ).all(lastId) as Record<string, unknown>[]
+          const rows = await db.all('SELECT * FROM activity WHERE id > ? ORDER BY id ASC', lastId) as Record<string, unknown>[]
           for (const row of rows) {
             lastId = Math.max(lastId, row.id as number)
             if (row.action === 'heartbeat') continue
@@ -44,6 +42,7 @@ export async function GET(req: NextRequest) {
           clearInterval(interval)
           controller.close()
         }
+        })();
       }, 800)
 
       req.signal.addEventListener('abort', () => {
