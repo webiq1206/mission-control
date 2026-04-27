@@ -17,3 +17,6 @@ deploymentTarget = "cloudrun"
 [env]
 NODE_ENV = "production"
 PORT = "3000"
+TURSO_DATABASE_URL = "libsql://mission-control-timberandlove.aws-us-west-2.turso.io"
+TURSO_AUTH_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3NzczMjA0NTgsImlkIjoiMDE5ZGQwOGMtZTQwMS03M2VhLThkMDAtNWZhMzNiNmQxMDliIiwicmlkIjoiM2QwZDRhOWItOTFlNC00ZDNhLTkwNzktNmQzNjlkM2QwMTk2In0.-XrfAxZrix9KVlcPpbtY_wxXx0pJ0bYbGjgEH3oOK5PF_0NYMazc7DFT_d_8kB-3axxrZoIKb5KL3meaB7SKCQ"
+MC_AUTH_TOKEN = "b6a02df0fdb863b30f11d58f7fd206b1583b7618e722ea80"
