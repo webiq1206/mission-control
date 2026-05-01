@@ -3,35 +3,54 @@ export const dynamic = 'force-dynamic'
 import { getDb } from '@/lib/db'
 import { ENTITIES } from '@/lib/entities'
 import { PriorityRow } from '@/components/ui/PriorityRow'
-import { EntityHealthCard } from '@/components/ui/EntityHealthCard'
 import { ApprovalCard } from '@/components/approvals/ApprovalCard'
 import { ClickableTaskRow } from '@/components/ui/ClickableTaskRow'
 import { ClickableAgentCard } from '@/components/ui/ClickableAgentCard'
 import { PageRefresher } from '@/components/ui/PageRefresher'
 import { EntityBadge } from '@/components/ui/EntityBadge'
 import Link from 'next/link'
-import { formatDistanceToNow } from 'date-fns'
 
-async function getOverviewData() {
+const ACTIVE_STATUSES = `'backlog','in_progress','blocked','approval_gated','assigned','executing','on_hold','open','next','pending_review'`
+
+async function getDashboardData() {
   const db = getDb()
 
-  const taskCounts = db.prepare(`
+  const counts = db.prepare(`
     SELECT
-      COUNT(*) as total,
-      SUM(CASE WHEN status IN ('executing','approved','in_progress') THEN 1 ELSE 0 END) as executing,
-      SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END) as in_review,
-      SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked,
+      SUM(CASE WHEN status IN (${ACTIVE_STATUSES}) THEN 1 ELSE 0 END) as total_active,
       SUM(CASE WHEN status = 'backlog' THEN 1 ELSE 0 END) as backlog,
-      SUM(CASE WHEN status = 'approval_gated' THEN 1 ELSE 0 END) as awaiting_approval,
-      SUM(CASE WHEN status = 'blocked' AND created_at <= datetime('now', '-2 days') THEN 1 ELSE 0 END) as blocked_2plus,
-      SUM(CASE WHEN status = 'completed' AND completed_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END) as completed_today,
-      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_total
+      SUM(CASE WHEN status IN ('in_progress','executing','assigned') THEN 1 ELSE 0 END) as in_progress,
+      SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked,
+      SUM(CASE WHEN status = 'approval_gated' THEN 1 ELSE 0 END) as approval_gated,
+      SUM(CASE WHEN status = 'completed' AND COALESCE(completed_at, updated_at) >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as completed_7d,
+      SUM(CASE WHEN surface_blocked = 1 AND status NOT IN ('completed','archived','cancelled') THEN 1 ELSE 0 END) as surface_blocked
     FROM tasks
   `).get() as Record<string, number>
 
   const pendingApprovals = db.prepare(
     `SELECT * FROM approvals WHERE status = 'pending'
-     ORDER BY CASE urgency WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC
+     ORDER BY CASE urgency WHEN 'critical' THEN 1 WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC
+     LIMIT 20`
+  ).all() as Record<string, unknown>[]
+
+  const blockedTasks = db.prepare(
+    `SELECT id, title, entity, assigned_agent, priority, updated_at
+     FROM tasks WHERE status = 'blocked'
+     ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, updated_at ASC
+     LIMIT 10`
+  ).all() as Record<string, unknown>[]
+
+  const inProgressTasks = db.prepare(
+    `SELECT id, title, entity, assigned_agent, priority, updated_at, status
+     FROM tasks WHERE status IN ('in_progress','executing','assigned')
+     ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, updated_at DESC
+     LIMIT 30`
+  ).all() as Record<string, unknown>[]
+
+  const recentlyCompleted = db.prepare(
+    `SELECT id, title, entity, assigned_agent, COALESCE(completed_at, updated_at) as done_at
+     FROM tasks WHERE status = 'completed' AND COALESCE(completed_at, updated_at) >= datetime('now', '-7 days')
+     ORDER BY COALESCE(completed_at, updated_at) DESC
      LIMIT 10`
   ).all() as Record<string, unknown>[]
 
@@ -49,230 +68,198 @@ async function getOverviewData() {
 
   const entityKpis = db.prepare('SELECT * FROM entity_kpis').all() as Record<string, unknown>[]
 
-  const blockedTasks = db.prepare(
-    `SELECT id, title, entity, assigned_agent, priority FROM tasks WHERE status = 'blocked' ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END LIMIT 8`
+  // Per-entity stats for quick stats section
+  const entityStats = db.prepare(`
+    SELECT
+      entity,
+      COUNT(*) as active_tasks
+    FROM tasks
+    WHERE status IN (${ACTIVE_STATUSES})
+    GROUP BY entity
+  `).all() as { entity: string; active_tasks: number }[]
+
+  const entityApprovals = db.prepare(`
+    SELECT entity, COUNT(*) as pending
+    FROM approvals WHERE status = 'pending'
+    GROUP BY entity
+  `).all() as { entity: string; pending: number }[]
+
+  const entityLastActivity = db.prepare(`
+    SELECT entity, MAX(created_at) as last_activity
+    FROM activity GROUP BY entity
+  `).all() as { entity: string; last_activity: string }[]
+
+  const recentActivity = db.prepare(
+    `SELECT id, agent, action, detail, entity, created_at FROM activity ORDER BY created_at DESC LIMIT 10`
   ).all() as Record<string, unknown>[]
 
-  // Count decisions only (non-acknowledgment pending approvals)
-  const pendingDecisionsCount = db.prepare(
-    `SELECT COUNT(*) as cnt FROM approvals
-     WHERE status = 'pending'
-     AND (approval_category IS NULL OR approval_category != 'acknowledgment')`
-  ).get() as { cnt: number }
-
   return {
-    taskCounts, pendingApprovals, agents, onlineAgents, priorities, entityKpis, blockedTasks,
-    pendingDecisionsCount: pendingDecisionsCount.cnt,
+    counts,
+    pendingApprovals,
+    blockedTasks,
+    inProgressTasks,
+    recentlyCompleted,
+    agents,
+    onlineAgents,
+    priorities,
+    entityKpis,
+    entityStats,
+    entityApprovals,
+    entityLastActivity,
+    recentActivity,
   }
 }
 
+function UrgencyBadge({ urgency }: { urgency: string }) {
+  const colors: Record<string, { bg: string; color: string; border: string }> = {
+    critical: { bg: 'var(--red-bg)', color: 'var(--red)', border: 'var(--red-border)' },
+    urgent:   { bg: 'var(--red-bg)', color: 'var(--red)', border: 'var(--red-border)' },
+    high:     { bg: 'var(--amber-bg)', color: 'var(--amber)', border: 'var(--amber-border)' },
+    normal:   { bg: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: 'var(--border-subtle)' },
+    medium:   { bg: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: 'var(--border-subtle)' },
+    low:      { bg: 'transparent', color: 'var(--text-muted)', border: 'var(--border-faint)' },
+  }
+  const c = colors[urgency] ?? colors.normal
+  return (
+    <span style={{
+      fontSize: 10, fontFamily: 'var(--font-mono)', padding: '2px 7px', borderRadius: 10,
+      background: c.bg, color: c.color, border: `1px solid ${c.border}`,
+      textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600,
+    }}>
+      {urgency}
+    </span>
+  )
+}
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const colors: Record<string, string> = {
+    critical: 'var(--red)', high: 'var(--amber)', medium: 'var(--blue)',
+    low: 'var(--text-muted)', normal: 'var(--text-muted)',
+  }
+  return (
+    <span style={{
+      width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+      background: colors[priority] ?? 'var(--text-muted)',
+      boxShadow: priority === 'critical' ? '0 0 6px var(--red)' : 'none',
+    }} />
+  )
+}
+
+function SummaryCard({
+  label, value, color, href, subtext,
+}: { label: string; value: number | string; color: string; href: string; subtext?: string }) {
+  return (
+    <Link href={href} style={{ textDecoration: 'none', color: 'inherit' }}>
+      <div className="card" style={{ padding: 'var(--sp-4)', cursor: 'pointer' }}>
+        <div className="label" style={{ marginBottom: 'var(--sp-2)', fontSize: 9 }}>{label.toUpperCase()}</div>
+        <div className="value-md" style={{ color }}>{value}</div>
+        {subtext && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>{subtext}</div>}
+      </div>
+    </Link>
+  )
+}
+
 export default async function OverviewPage() {
-  const data = await getOverviewData()
-  const pendingCount = data.pendingApprovals.length
-  const blockedCount = data.taskCounts.blocked || 0
-  const criticalApprovals = data.pendingApprovals.filter(a => ['urgent','critical','high'].includes(a.urgency as string)).length
-  const pendingDecisions = data.pendingDecisionsCount
-  const blocked2Plus = data.taskCounts.blocked_2plus || 0
-  const approvalGatedCount = data.taskCounts.awaiting_approval || 0
-  const inboxCount = pendingDecisions + blocked2Plus + approvalGatedCount
+  const data = await getDashboardData()
+  const {
+    counts, pendingApprovals, blockedTasks, inProgressTasks,
+    recentlyCompleted, agents, onlineAgents, priorities,
+    entityStats, entityApprovals, entityLastActivity, recentActivity,
+  } = data
+
+  const pendingCount = pendingApprovals.length
+  const blockedCount = counts.blocked || 0
+  const needsAttention = pendingCount + (counts.surface_blocked || 0) + blockedCount
+  const criticalAlerts = pendingApprovals.filter(a => ['urgent','critical','high'].includes(a.urgency as string)).length
+  const completedLast7d = counts.completed_7d || 0
+
+  // Group in-progress tasks by entity
+  const byEntity: Record<string, typeof inProgressTasks> = {}
+  for (const t of inProgressTasks) {
+    const ent = (t.entity as string) || 'Unknown'
+    if (!byEntity[ent]) byEntity[ent] = []
+    byEntity[ent].push(t)
+  }
 
   return (
     <div style={{ padding: '28px 32px', maxWidth: 1200, minHeight: '100%' }}>
       <PageRefresher />
 
-      {/* ─── NEEDS YOUR ATTENTION — TOP SECTION ───────────── */}
-      {inboxCount > 0 && (
-        <section style={{ marginBottom: 'var(--sp-6)' }}>
-          <Link href="/inbox" style={{ textDecoration: 'none', display: 'block' }}>
-            <div style={{
-              borderRadius: 12,
-              padding: 'var(--sp-5)',
-              background: 'linear-gradient(135deg, var(--red-bg), var(--amber-bg))',
-              border: '1px solid rgba(255,69,58,0.35)',
-              boxShadow: '0 0 0 1px rgba(255,69,58,0.1), 0 0 24px rgba(255,69,58,0.08)',
-              cursor: 'pointer',
-              transition: 'box-shadow 0.2s',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--sp-4)' }}>
-                <span style={{
-                  width: 9, height: 9, borderRadius: '50%',
-                  background: 'var(--red)', flexShrink: 0,
-                  boxShadow: '0 0 8px var(--red)',
-                  animation: 'pulse-glow 2s ease-in-out infinite',
-                }} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.2px' }}>
-                  Needs Your Attention
-                </span>
-                <span style={{
-                  marginLeft: 'auto',
-                  fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 10px', borderRadius: 20,
-                  background: 'var(--red-bg)', color: 'var(--red)', border: '1px solid var(--red-border)',
-                  fontWeight: 700,
-                }}>
-                  Open Inbox →
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                {pendingDecisions > 0 && (
-                  <div style={{
-                    padding: 'var(--sp-3) var(--sp-4)',
-                    borderRadius: 8,
-                    background: 'var(--amber-bg)',
-                    border: '1px solid var(--amber-border)',
-                    display: 'flex', flexDirection: 'column', gap: 2, minWidth: 120,
-                  }}>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--amber)', lineHeight: 1 }}>
-                      {pendingDecisions}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--amber)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      Pending Decisions
-                    </div>
-                  </div>
-                )}
-                {blocked2Plus > 0 && (
-                  <div style={{
-                    padding: 'var(--sp-3) var(--sp-4)',
-                    borderRadius: 8,
-                    background: 'var(--red-bg)',
-                    border: '1px solid var(--red-border)',
-                    display: 'flex', flexDirection: 'column', gap: 2, minWidth: 120,
-                  }}>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--red)', lineHeight: 1 }}>
-                      {blocked2Plus}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--red)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      Blocked 2+ Days
-                    </div>
-                  </div>
-                )}
-                {approvalGatedCount > 0 && (
-                  <div style={{
-                    padding: 'var(--sp-3) var(--sp-4)',
-                    borderRadius: 8,
-                    background: 'var(--blue-bg)',
-                    border: '1px solid var(--blue-border)',
-                    display: 'flex', flexDirection: 'column', gap: 2, minWidth: 120,
-                  }}>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--blue)', lineHeight: 1 }}>
-                      {approvalGatedCount}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--blue)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      Approval Gated
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </Link>
-        </section>
-      )}
-
-      {/* Page Header */}
-      <div style={{ marginBottom: 'var(--sp-6)' }}>
+      {/* ─── HEADER ─────────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 'var(--sp-5)' }}>
         <div className="label" style={{ marginBottom: 6 }}>Mission Control</div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <h1 className="h1">Overview</h1>
-          {(pendingCount > 0 || blockedCount > 0) && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              {pendingCount > 0 && (
-                <Link href="/approvals" style={{ textDecoration: 'none' }}>
-                  <span style={{
-                    fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 10px', borderRadius: 20,
-                    background: 'var(--amber-bg)', color: 'var(--amber)', border: '1px solid var(--amber-border)',
-                    cursor: 'pointer',
-                  }}>
-                    {pendingCount} pending decision{pendingCount !== 1 ? 's' : ''}
-                  </span>
-                </Link>
-              )}
-              {blockedCount > 0 && (
-                <Link href="/inbox" style={{ textDecoration: 'none' }}>
-                  <span style={{
-                    fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 10px', borderRadius: 20,
-                    background: 'var(--red-bg)', color: 'var(--red)', border: '1px solid var(--red-border)',
-                    cursor: 'pointer',
-                  }}>
-                    {blockedCount} blocked
-                  </span>
-                </Link>
-              )}
-            </div>
-          )}
-        </div>
+        <h1 className="h1">Dashboard</h1>
         <p className="body-xs" style={{ color: 'var(--text-secondary)', marginTop: 4 }}>
-          Live snapshot — {data.taskCounts.total || 0} tasks across 7 entities
+          {counts.total_active || 0} active tasks across 7 entities
         </p>
       </div>
 
-      {/* ─── OPERATIONAL SNAPSHOT ──────────────────────── */}
+      {/* ─── SECTION 1: SUMMARY CARDS ───────────────────────────────────── */}
       <section style={{ marginBottom: 'var(--sp-8)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 'var(--sp-3)' }}>
-          {[
-            { label: 'Backlog', value: data.taskCounts.backlog || 0, href: '/tasks', color: 'var(--text-secondary)' },
-            { label: 'In Progress', value: data.taskCounts.executing || 0, href: '/tasks', color: 'var(--blue)' },
-            { label: 'Awaiting Approval', value: data.taskCounts.awaiting_approval || 0, href: '/inbox', color: 'var(--amber)' },
-            { label: 'Blocked', value: data.taskCounts.blocked || 0, href: '/inbox', color: data.taskCounts.blocked > 0 ? 'var(--red)' : 'var(--text-muted)' },
-            { label: 'Done Today', value: data.taskCounts.completed_today || 0, href: '/tasks', color: data.taskCounts.completed_today > 0 ? 'var(--green)' : 'var(--text-muted)' },
-            { label: 'Agents Online', value: `${data.onlineAgents}/${data.agents.length}`, href: '/agents', color: data.onlineAgents > 0 ? 'var(--green)' : 'var(--text-muted)' },
-          ].map(metric => (
-            <Link key={metric.label} href={metric.href} style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div className="card" style={{ padding: 'var(--sp-4)', cursor: 'pointer' }}>
-                <div className="label" style={{ marginBottom: 'var(--sp-2)', fontSize: 9 }}>{metric.label.toUpperCase()}</div>
-                <div className="value-md" style={{ color: metric.color }}>
-                  {metric.value}
-                </div>
-              </div>
-            </Link>
-          ))}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--sp-3)' }}>
+          <SummaryCard
+            label="Active Tasks" value={counts.total_active || 0}
+            color="var(--text-primary)" href="/kanban"
+          />
+          <SummaryCard
+            label="Needs Attention" value={needsAttention}
+            color={needsAttention > 0 ? 'var(--amber)' : 'var(--text-muted)'} href="/approvals"
+            subtext={pendingCount > 0 ? `${pendingCount} pending approvals` : undefined}
+          />
+          <SummaryCard
+            label="Blocked" value={blockedCount}
+            color={blockedCount > 0 ? 'var(--red)' : 'var(--text-muted)'} href="/kanban"
+          />
+          <SummaryCard
+            label="Completed (7d)" value={completedLast7d}
+            color={completedLast7d > 0 ? 'var(--green)' : 'var(--text-muted)'} href="/kanban"
+          />
+          <SummaryCard
+            label="Critical Alerts" value={criticalAlerts}
+            color={criticalAlerts > 0 ? 'var(--red)' : 'var(--green)'} href="/approvals"
+            subtext={criticalAlerts === 0 ? 'All clear' : undefined}
+          />
+          <SummaryCard
+            label="Agents Online" value={`${onlineAgents}/${agents.length}`}
+            color={onlineAgents > 0 ? 'var(--green)' : 'var(--text-muted)'} href="/agents"
+          />
         </div>
       </section>
 
-      {/* ─── NEEDS ATTENTION ──────────────────────────────────────────────────── */}
-      {/* Ada design spec 2026-04-23: unified dominant section at top of overview. */}
-      {/* When active (any pending approvals OR blocked tasks): amber glow border.  */}
-      {/* When all clear: green confirmation, no glow. Replaces separate             */}
-      {/* "Needs Your Decision" + "Blocked" sections.                               */}
+      {/* ─── SECTION 2: NEEDS JARED'S ATTENTION ────────────────────────── */}
       <section style={{ marginBottom: 'var(--sp-8)' }}>
-        <div
-          style={{
-            borderRadius: 10,
-            padding: 'var(--sp-5)',
-            background: 'var(--bg-card)',
-            /* Amber attention glow only when there's something actionable */
-            border: (pendingCount > 0 || blockedCount > 0)
-              ? '1px solid rgba(255,159,10,0.4)'
-              : '1px solid var(--border-subtle)',
-            boxShadow: (pendingCount > 0 || blockedCount > 0)
-              ? '0 0 0 1px rgba(255,159,10,0.15), 0 0 20px rgba(255,159,10,0.08)'
-              : 'none',
-            transition: 'border 0.3s ease, box-shadow 0.3s ease',
-          }}
-        >
-          {/* Section header row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: (pendingCount > 0 || blockedCount > 0) ? 'var(--sp-5)' : 0 }}>
-            <span
-              className="label"
-              style={{
-                color: (pendingCount > 0 || blockedCount > 0)
-                  ? 'var(--mc-status-attention)'
-                  : 'var(--text-muted)',
-              }}
-            >
-              NEEDS ATTENTION
+        <div style={{
+          borderRadius: 10, padding: 'var(--sp-5)',
+          background: 'var(--bg-card)',
+          border: needsAttention > 0 ? '1px solid rgba(255,159,10,0.4)' : '1px solid var(--border-subtle)',
+          boxShadow: needsAttention > 0 ? '0 0 0 1px rgba(255,159,10,0.15), 0 0 20px rgba(255,159,10,0.08)' : 'none',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: needsAttention > 0 ? 'var(--sp-5)' : 0 }}>
+            <span className="label" style={{ color: needsAttention > 0 ? 'var(--mc-status-attention)' : 'var(--text-muted)' }}>
+              NEEDS YOUR ATTENTION
             </span>
-            {/* Pulsing amber dot — only when there's something pending */}
-            {(pendingCount > 0 || blockedCount > 0) && (
-              <span style={{
-                width: 6, height: 6, borderRadius: '50%',
-                background: 'var(--mc-status-attention)',
-                boxShadow: '0 0 6px var(--mc-status-attention)',
-                animation: 'pulse-glow 2s ease-in-out infinite',
-              }} />
+            {needsAttention > 0 && (
+              <>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: 'var(--mc-status-attention)',
+                  boxShadow: '0 0 6px var(--mc-status-attention)',
+                  animation: 'pulse-glow 2s ease-in-out infinite',
+                }} />
+                <span style={{
+                  fontSize: 11, fontFamily: 'var(--font-mono)', padding: '2px 9px', borderRadius: 10,
+                  background: 'var(--amber-bg)', color: 'var(--amber)', border: '1px solid var(--amber-border)',
+                }}>
+                  {needsAttention}
+                </span>
+              </>
             )}
+            <Link href="/approvals" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>
+              View all →
+            </Link>
           </div>
 
-          {/* ── ALL CLEAR state ─────────────────────────────────────────────── */}
-          {pendingCount === 0 && blockedCount === 0 && (
+          {needsAttention === 0 ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 16 }}>✓</span>
               <div>
@@ -280,201 +267,258 @@ export default async function OverviewPage() {
                 <div className="body-xs" style={{ color: 'var(--text-secondary)' }}>No decisions needed. No blocked tasks.</div>
               </div>
             </div>
-          )}
-
-          {/* ── PENDING DECISIONS sub-section ──────────────────────────────── */}
-          {pendingCount > 0 && (
-            <div style={{ marginBottom: blockedCount > 0 ? 'var(--sp-5)' : 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
-                {/* Amber dot for decisions */}
-                <span style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: 'var(--amber)', flexShrink: 0,
-                  boxShadow: '0 0 4px var(--amber)',
-                  animation: 'pulse-glow 2s ease-in-out infinite',
-                }} />
-                <span className="label" style={{ fontSize: 9, color: 'var(--amber)' }}>DECISIONS — {pendingCount}</span>
-                {pendingCount > 5 && (
-                  <Link href="/approvals" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>
-                    See all {pendingCount} →
-                  </Link>
-                )}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {data.pendingApprovals.slice(0, 5).map((a) => (
-                  <ApprovalCard
-                    key={a.id as string}
-                    id={a.id as string}
-                    type={a.type as string}
-                    entity={a.entity as string}
-                    urgency={a.urgency as string}
-                    requested_by={a.requested_by as string}
-                    title={a.title as string}
-                    description={a.description as string}
-                    cost_estimate={a.cost_estimate as string | undefined}
-                    created_at={a.created_at as string}
-                    expires_at={a.expires_at as string | undefined}
-                    approval_category={a.approval_category as string | null}
-                    compact
-                  />
-                ))}
-                {pendingCount > 5 && (
-                  <Link href="/approvals" style={{ textDecoration: 'none' }}>
-                    <div style={{
-                      padding: 'var(--sp-3)', textAlign: 'center', cursor: 'pointer',
-                      borderRadius: 6, background: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                    }}>
-                      <span className="body-sm" style={{ color: 'var(--blue)' }}>
-                        + {pendingCount - 5} more decisions → View all
-                      </span>
-                    </div>
-                  </Link>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ── BLOCKED TASKS sub-section ───────────────────────────────────── */}
-          {blockedCount > 0 && (
-            <div>
-              {/* Divider between Decisions and Blocked if both are showing */}
-              {pendingCount > 0 && (
-                <div style={{ height: 1, background: 'var(--border-subtle)', marginBottom: 'var(--sp-4)' }} />
-              )}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
-                {/* Red dot for blocked */}
-                <span style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: 'var(--red)', flexShrink: 0,
-                  boxShadow: '0 0 4px var(--red)',
-                }} />
-                <span className="label" style={{ fontSize: 9, color: 'var(--red)' }}>BLOCKED — {blockedCount}</span>
-                <Link href="/tasks" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>
-                  View board →
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Critical/urgent first */}
+              {pendingApprovals.slice(0, 10).map((a) => (
+                <ApprovalCard
+                  key={a.id as string}
+                  id={a.id as string}
+                  type={a.type as string}
+                  entity={a.entity as string}
+                  urgency={a.urgency as string}
+                  requested_by={a.requested_by as string}
+                  title={a.title as string}
+                  description={a.description as string}
+                  cost_estimate={a.cost_estimate as string | undefined}
+                  created_at={a.created_at as string}
+                  expires_at={a.expires_at as string | undefined}
+                  approval_category={a.approval_category as string | null}
+                  compact
+                />
+              ))}
+              {pendingCount > 10 && (
+                <Link href="/approvals" style={{ textDecoration: 'none' }}>
+                  <div style={{
+                    padding: 'var(--sp-3)', textAlign: 'center', cursor: 'pointer',
+                    borderRadius: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)',
+                  }}>
+                    <span className="body-sm" style={{ color: 'var(--blue)' }}>
+                      + {pendingCount - 10} more → View all in Needs Attention
+                    </span>
+                  </div>
                 </Link>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {data.blockedTasks.map(t => (
-                  <ClickableTaskRow key={t.id as string} taskId={t.id as string}>
-                    <div style={{
-                      padding: 'var(--sp-3) var(--sp-4)',
-                      borderRadius: 6,
-                      background: 'var(--bg-elevated)',
-                      borderLeft: '3px solid var(--red)',
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      cursor: 'pointer', gap: 12,
-                      border: '1px solid var(--border-subtle)',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                        <EntityBadge entity={t.entity as string} />
-                        <span className="body-sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {t.title as string}
-                        </span>
-                      </div>
-                      <span style={{ fontSize: 11, color: 'var(--red)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>
-                        Resolve →
-                      </span>
-                    </div>
-                  </ClickableTaskRow>
-                ))}
-              </div>
+              )}
             </div>
           )}
         </div>
       </section>
 
-      {/* ─── AGENT TEAM ───────────────────────────────── */}
-      <section style={{ marginBottom: 'var(--sp-8)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
-          <span className="label">AGENT TEAM</span>
-          <span className="meta">— {data.onlineAgents} of {data.agents.length} active</span>
-        </div>
-        <div style={{ display: 'flex', gap: 'var(--sp-2)', overflowX: 'auto', paddingBottom: 4 }}>
-          {data.agents.map((agent) => {
-            const lastSeen = agent.last_seen as string | null
-            let statusColor = 'var(--text-faint)'
-            let isPulsing = false
-            let statusLabel = 'Offline'
-            if (lastSeen) {
-              const mins = (Date.now() - new Date(lastSeen).getTime()) / 60000
-              if (mins < 60) { statusColor = 'var(--green)'; isPulsing = true; statusLabel = 'Active' }
-              else if (mins < 180) { statusColor = 'var(--amber)'; statusLabel = 'Idle' }
-              else { statusLabel = 'Offline' }
-            }
-            const currentTask = (agent.current_task as string) || ''
-            const taskPreview = currentTask.split(' ').slice(0, 5).join(' ')
-            const hasError = (agent.error_count_24h as number) > 0
-            return (
-              <ClickableAgentCard key={agent.agent_id as string} data={agent}>
-                <div className="card" style={{
-                  flexShrink: 0, width: 165,
-                  padding: 'var(--sp-3)',
-                  cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', gap: 5,
-                  borderLeft: hasError ? '2px solid var(--red)' : '2px solid transparent',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 16 }}>{agent.emoji as string}</span>
-                    <span className="h4" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {agent.agent_name as string}
-                    </span>
-                    <span style={{
-                      width: 7, height: 7, borderRadius: '50%', background: statusColor, flexShrink: 0,
-                      boxShadow: isPulsing ? `0 0 4px ${statusColor}` : 'none',
-                      animation: isPulsing ? 'pulse-glow 2s ease-in-out infinite' : undefined,
-                    }} />
-                  </div>
-                  <div className="meta" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: statusColor, fontSize: 9 }}>
-                    {statusLabel}
-                  </div>
-                  <div className="meta" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {taskPreview || 'No active task'}
-                  </div>
-                  {hasError && (
-                    <div style={{ fontSize: 9, color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>
-                      {agent.error_count_24h as number} error{(agent.error_count_24h as number) !== 1 ? 's' : ''} today
+      {/* ─── SECTION 3: IN PROGRESS BY ENTITY ─────────────────────────── */}
+      {inProgressTasks.length > 0 && (
+        <section style={{ marginBottom: 'var(--sp-8)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-4)' }}>
+            <span className="label">IN PROGRESS</span>
+            <span className="meta">— {inProgressTasks.length} tasks</span>
+            <Link href="/kanban" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>Board view →</Link>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            {Object.entries(byEntity).map(([entity, tasks]) => (
+              <div key={entity}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-2)' }}>
+                  <EntityBadge entity={entity} />
+                  <span className="meta">{tasks.length} task{tasks.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {tasks.slice(0, 5).map(t => (
+                    <ClickableTaskRow key={t.id as string} taskId={t.id as string}>
+                      <div className="card" style={{
+                        padding: 'var(--sp-3) var(--sp-4)',
+                        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                      }}>
+                        <PriorityBadge priority={t.priority as string} />
+                        <span className="body-sm" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {t.title as string}
+                        </span>
+                        {t.assigned_agent && (
+                          <span className="meta" style={{ flexShrink: 0, fontSize: 10 }}>{t.assigned_agent as string}</span>
+                        )}
+                        <span className="meta" style={{ flexShrink: 0, fontSize: 10 }}>
+                          {t.updated_at ? new Date(t.updated_at as string).toLocaleDateString() : ''}
+                        </span>
+                      </div>
+                    </ClickableTaskRow>
+                  ))}
+                  {tasks.length > 5 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', paddingLeft: 'var(--sp-3)' }}>
+                      + {tasks.length - 5} more...
                     </div>
                   )}
                 </div>
-              </ClickableAgentCard>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ─── SECTION 4: BLOCKED ────────────────────────────────────────── */}
+      {blockedTasks.length > 0 && (
+        <section style={{ marginBottom: 'var(--sp-8)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
+            <span className="label" style={{ color: 'var(--red)' }}>BLOCKED</span>
+            <span className="meta">— {blockedCount} tasks</span>
+            <Link href="/kanban" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>View all →</Link>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {blockedTasks.map(t => {
+              const updatedAt = t.updated_at as string
+              const blockedDays = updatedAt
+                ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
+                : 0
+              const isLongBlocked = blockedDays > 3
+              return (
+                <ClickableTaskRow key={t.id as string} taskId={t.id as string}>
+                  <div style={{
+                    padding: 'var(--sp-3) var(--sp-4)',
+                    borderRadius: 6,
+                    background: isLongBlocked ? 'rgba(255,69,58,0.08)' : 'var(--bg-elevated)',
+                    borderLeft: '3px solid var(--red)',
+                    border: `1px solid ${isLongBlocked ? 'var(--red-border)' : 'var(--border-subtle)'}`,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    cursor: 'pointer', gap: 12,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                      <EntityBadge entity={t.entity as string} />
+                      <span className="body-sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {t.title as string}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {isLongBlocked && (
+                        <span style={{ fontSize: 10, color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>
+                          {blockedDays}d blocked
+                        </span>
+                      )}
+                      <span style={{ fontSize: 11, color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>Resolve →</span>
+                    </div>
+                  </div>
+                </ClickableTaskRow>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ─── SECTION 5: RECENTLY COMPLETED ────────────────────────────── */}
+      {recentlyCompleted.length > 0 && (
+        <section style={{ marginBottom: 'var(--sp-8)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
+            <span className="label">RECENTLY COMPLETED</span>
+            <span className="meta">— last 7 days</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {recentlyCompleted.map(t => (
+              <ClickableTaskRow key={t.id as string} taskId={t.id as string}>
+                <div className="card" style={{
+                  padding: 'var(--sp-2) var(--sp-4)',
+                  display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
+                  <EntityBadge entity={t.entity as string} />
+                  <span className="body-sm" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.title as string}
+                  </span>
+                  {t.assigned_agent && (
+                    <span className="meta" style={{ flexShrink: 0, fontSize: 10 }}>{t.assigned_agent as string}</span>
+                  )}
+                  <span className="meta" style={{ flexShrink: 0, fontSize: 10 }}>
+                    {t.done_at ? new Date(t.done_at as string).toLocaleDateString() : ''}
+                  </span>
+                </div>
+              </ClickableTaskRow>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ─── SECTION 6: QUICK STATS BY ENTITY ─────────────────────────── */}
+      <section style={{ marginBottom: 'var(--sp-8)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
+          <span className="label">ENTITY OVERVIEW</span>
+          <Link href="/entities" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>View entities →</Link>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 'var(--sp-3)' }}>
+          {ENTITIES.map(entity => {
+            const stats = entityStats.find(s => s.entity === entity.label || s.entity === entity.slug)
+            const approvals = entityApprovals.find(a => a.entity === entity.label || a.entity === entity.slug)
+            const lastAct = entityLastActivity.find(a => a.entity === entity.label || a.entity === entity.slug)
+            const activeTasks = stats?.active_tasks ?? 0
+            const pendingAppr = approvals?.pending ?? 0
+            return (
+              <Link key={entity.slug} href={`/entities/${entity.slug}`} style={{ textDecoration: 'none' }}>
+                <div className="card" style={{ padding: 'var(--sp-4)', cursor: 'pointer' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 'var(--sp-2)' }}>
+                    {entity.label}
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: activeTasks > 0 ? 'var(--blue)' : 'var(--text-muted)' }}>
+                        {activeTasks}
+                      </div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Active</div>
+                    </div>
+                    {pendingAppr > 0 && (
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--amber)' }}>{pendingAppr}</div>
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Pending</div>
+                      </div>
+                    )}
+                  </div>
+                  {lastAct?.last_activity && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 'var(--sp-2)' }}>
+                      Last: {new Date(lastAct.last_activity).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+              </Link>
             )
           })}
         </div>
       </section>
 
-      {/* ─── STRATEGIC PRIORITIES ──────────────────────── */}
-      {data.priorities.length > 0 && (
+      {/* ─── RECENT ACTIVITY ────────────────────────────────────────────── */}
+      {recentActivity.length > 0 && (
+        <section style={{ marginBottom: 'var(--sp-8)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
+            <span className="label">RECENT ACTIVITY</span>
+            <Link href="/logs" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>View logs →</Link>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {recentActivity.map(act => (
+              <div key={act.id as number} className="card" style={{
+                padding: 'var(--sp-2) var(--sp-4)',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', flexShrink: 0 }}>
+                  {act.agent as string}
+                </span>
+                {act.entity && <EntityBadge entity={act.entity as string} />}
+                <span className="body-sm" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {act.action as string}{act.detail ? ` — ${act.detail as string}` : ''}
+                </span>
+                <span className="meta" style={{ flexShrink: 0, fontSize: 10 }}>
+                  {act.created_at ? new Date(act.created_at as string).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ─── STRATEGIC PRIORITIES ───────────────────────────────────────── */}
+      {priorities.length > 0 && (
         <section style={{ marginBottom: 'var(--sp-8)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
             <span className="label">STRATEGIC PRIORITIES</span>
             <Link href="/priorities" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>View all →</Link>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {data.priorities.map((p) => (
+            {priorities.map((p) => (
               <PriorityRow key={p.id as string} priority={p} />
             ))}
           </div>
         </section>
       )}
-
-      {/* ─── ENTITY HEALTH ────────────────────────────── */}
-      <section style={{ marginBottom: 'var(--sp-8)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-3)' }}>
-          <span className="label">ENTITIES</span>
-          <Link href="/entities" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--blue)', textDecoration: 'none' }}>View all →</Link>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 'var(--sp-3)' }}>
-          {ENTITIES.map(entity => {
-            const kpi = data.entityKpis.find(k =>
-              k.entity === entity.label || k.entity === entity.slug
-            ) || null
-            return (
-              <EntityHealthCard key={entity.slug} entity={entity} kpi={kpi} />
-            )
-          })}
-        </div>
-      </section>
     </div>
   )
 }

@@ -7,7 +7,20 @@ import { formatDistanceToNow } from 'date-fns'
 
 export default async function AgentsPage() {
   const db = getDb()
-  const agents = db.prepare('SELECT * FROM agent_heartbeats ORDER BY agent_id').all() as Record<string, unknown>[]
+  // Deduplicate: if multiple rows per agent_id, keep the one with most recent last_seen
+  const agents = db.prepare(`
+    SELECT * FROM agent_heartbeats
+    WHERE (agent_id, last_seen) IN (
+      SELECT agent_id, MAX(last_seen) FROM agent_heartbeats GROUP BY agent_id
+    )
+    ORDER BY
+      CASE
+        WHEN last_seen IS NULL THEN 3
+        WHEN (julianday('now') - julianday(last_seen)) * 24 * 60 < 60 THEN 1
+        ELSE 2
+      END,
+      agent_id
+  `).all() as Record<string, unknown>[]
 
   const activeCount = agents.filter(a => {
     if (!a.last_seen) return false
@@ -54,12 +67,15 @@ export default async function AgentsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
         {agents.map(agent => {
           const lastSeen = agent.last_seen as string | null
-          let statusColor = 'var(--red)'
+          let statusColor = 'var(--text-faint)'
+          let statusLabel = 'Offline'
           let isPulsing = false
+          let isInactive = false
           if (lastSeen) {
             const mins = (Date.now() - new Date(lastSeen).getTime()) / 60000
-            if (mins < 60) { statusColor = 'var(--green)'; isPulsing = true }
-            else if (mins < 180) { statusColor = 'var(--yellow)' }
+            if (mins < 60) { statusColor = 'var(--green)'; statusLabel = 'Active'; isPulsing = true }
+            else if (mins < 120) { statusColor = 'var(--yellow)'; statusLabel = 'Idle' }
+            else { statusColor = 'var(--amber)'; statusLabel = 'Inactive'; isInactive = true }
           }
           const hasError = (agent.error_count_24h as number) > 0
 
@@ -72,29 +88,63 @@ export default async function AgentsPage() {
                   ? '0 0 12px rgba(224,82,82,0.2), var(--shadow-card)'
                   : undefined,
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <span style={{ fontSize: 24 }}>{agent.emoji as string}</span>
-                  <h3 style={{ fontSize: 16, fontWeight: 500, color: 'var(--text-primary)' }}>{agent.agent_name as string}</h3>
-                   <span style={{
-                      width: 10, height: 10, borderRadius: '50%', background: statusColor,
-                      display: 'inline-block', flexShrink: 0, marginLeft: 'auto',
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 22 }}>{agent.emoji as string}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                      {agent.agent_name as string}
+                    </h3>
+                    {agent.model && (
+                      <div style={{ fontSize: 9, color: 'var(--text-faint)', fontFamily: 'monospace', marginTop: 1 }}>
+                        {agent.model as string}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                    <span style={{
+                      width: 9, height: 9, borderRadius: '50%', background: statusColor,
                       boxShadow: isPulsing ? `0 0 6px ${statusColor}` : 'none',
                       animation: isPulsing ? 'pulse-glow 2s ease-in-out infinite' : undefined,
                     }} />
+                    {isInactive && (
+                      <span style={{
+                        fontSize: 8, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4,
+                        background: 'var(--amber-bg)', color: 'var(--amber)', border: '1px solid var(--amber-border)',
+                        textTransform: 'uppercase', fontWeight: 700,
+                      }}>INACTIVE</span>
+                    )}
+                  </div>
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)', flexGrow: 1, marginBottom: 8 }}>
+
+                <div style={{ fontSize: 11, color: statusColor, fontFamily: 'monospace', marginBottom: 6 }}>
+                  {statusLabel}
+                </div>
+
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
                   {agent.role as string}
-                  {hasError && <span style={{ color: 'var(--red)', marginLeft: 8 }}>({(agent.error_count_24h as number)} errors)</span>}
                 </div>
+
                 <div style={{
-                  fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5,
+                  fontSize: 11, color: hasError ? 'var(--red)' : 'var(--text-body)', lineHeight: 1.5,
                   overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-                  marginBottom: 10,
+                  marginBottom: 8,
                 } as React.CSSProperties}>
                   {(agent.current_task as string) || 'No active task'}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                  Last seen: {lastSeen ? formatDistanceToNow(new Date(lastSeen), { addSuffix: true }) : <span style={{color: 'var(--red)'}}>never checked in</span>}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                    {lastSeen ? formatDistanceToNow(new Date(lastSeen), { addSuffix: true }) : 'never'}
+                  </div>
+                  {hasError && (
+                    <span style={{
+                      fontSize: 10, fontFamily: 'monospace', color: 'var(--red)',
+                      padding: '1px 6px', borderRadius: 4,
+                      background: 'var(--red-bg)', border: '1px solid var(--red-border)',
+                    }}>
+                      {agent.error_count_24h as number} err
+                    </span>
+                  )}
                 </div>
               </div>
             </ClickableAgentCard>

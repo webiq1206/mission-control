@@ -30,6 +30,14 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ assets: parsed, total: parsed.length })
 }
 
+// Categories where the asset is intended to be delivered to Jared. Raw .md
+// files are NEVER acceptable for these — enforces SHARED-CRIT-2026-04-29-
+// DELIVERABLE-STANDARD at the storage gate.
+const JARED_FACING_CATEGORIES = new Set([
+  'deliverable', 'report', 'content', 'design', 'strategy',
+  'research', 'copy', 'brief', 'spec',
+])
+
 export async function POST(req: NextRequest) {
   const db = await getUniversalDb()
   const body = await req.json()
@@ -42,6 +50,27 @@ export async function POST(req: NextRequest) {
 
   if (!id || !entity || !category || !title) {
     return NextResponse.json({ error: 'id, entity, category, title required' }, { status: 400 })
+  }
+
+  // Deliverable Standard: Jared-facing categories may not point at raw .md.
+  if (
+    JARED_FACING_CATEGORIES.has(String(category).toLowerCase()) &&
+    typeof file_path === 'string' &&
+    /\.md$/i.test(file_path) &&
+    !/internal-draft/i.test(String(file_path))
+  ) {
+    return NextResponse.json(
+      {
+        error: 'deliverable_standard_violation',
+        rule: 'SHARED-CRIT-2026-04-29-DELIVERABLE-STANDARD',
+        violations: [
+          'Jared-facing category cannot point at a raw .md file. ' +
+          'Render to PDF/xlsx/HTML/image first via Claude (Desktop app or ACP session), ' +
+          'upload to Drive, then register the asset with the rendered file path.',
+        ],
+      },
+      { status: 422 }
+    )
   }
 
   const tagsJson = JSON.stringify(Array.isArray(tags) ? tags : [])

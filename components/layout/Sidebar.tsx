@@ -5,22 +5,19 @@ import { useEffect, useState } from 'react'
 import { onApprovalAction } from '@/lib/approval-events'
 
 const NAV = [
-  { href: '/',           label: 'Overview'    },
-  { href: '/inbox',      label: "Jared's Inbox" },
-  { href: '/tasks',      label: 'Tasks'       },
-  { href: '/approvals',  label: 'Approvals'   },
-  { href: '/agents',     label: 'Agents'      },
-  { href: '/entities',   label: 'Entities'    },
-  { href: '/ads',        label: 'Ads'         },
-  { href: '/properties', label: 'Properties'  },
-  { href: '/loans',      label: 'Loans'       },
-  { href: '/priorities', label: 'Priorities'  },
-  { href: '/reports',    label: 'Reports'     },
-  { href: '/assets',     label: 'Assets'      },
-  { href: '/ideas',      label: 'Ideas'       },
-  { href: '/calendar',   label: 'Calendar'    },
-  { href: '/memory',     label: 'Memory'      },
-  { href: '/logs',       label: 'Logs'        },
+  { href: '/',           label: 'Dashboard'          },
+  { href: '/approvals',  label: 'Needs Attention'    },
+  { href: '/kanban',     label: 'Tasks'              },
+  { href: '/agents',     label: 'Agents'             },
+  { href: '/entities',   label: 'Entities'           },
+  { href: '/ads',        label: 'Ads'                },
+  { href: '/properties', label: 'Properties & Loans' },
+  { href: '/priorities', label: 'Priorities'         },
+  { href: '/reports',    label: 'Reports'            },
+  { href: '/assets',     label: 'Assets'             },
+  { href: '/ideas',      label: 'Ideas'              },
+  { href: '/calendar',   label: 'Calendar'           },
+  { href: '/logs',       label: 'Logs'               },
 ]
 
 const ENTITY_NAV = [
@@ -139,12 +136,11 @@ export function Sidebar() {
           {NAV.map(item => {
             const active = path === item.href || (item.href !== '/' && path.startsWith(item.href))
             const badge =
-              item.label === "Jared's Inbox" && counts.inbox > 0 ? counts.inbox :
-              item.label === 'Approvals' && counts.approvals > 0 ? counts.approvals :
+              item.label === 'Needs Attention' && counts.inbox > 0 ? counts.inbox :
               item.label === 'Ideas' && counts.ideas > 0 ? counts.ideas : null
             const badgeColor =
-              item.label === "Jared's Inbox" ? 'var(--red)' :
-              item.label === 'Ideas' ? 'var(--amber)' : 'var(--orange)'
+              item.label === 'Needs Attention' ? 'var(--red)' :
+              'var(--amber)'
 
             return (
               <Link

@@ -24,27 +24,47 @@ function timeAgo(ts: string) {
   catch { return ts }
 }
 
-export default async function AdsPage() {
+export default async function AdsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string; show_all?: string }>
+}) {
+  const params = await searchParams
+  const activeTab = params.tab || 'active'
+  const showAll = params.show_all === '1'
+
   const db = getDb()
 
+  const dateFilter = showAll ? '' : `WHERE COALESCE(date_stop, last_updated) >= date('now', '-90 days')`
+
   const campaigns = db.prepare(`
-    SELECT * FROM ad_campaigns ORDER BY last_updated DESC
+    SELECT * FROM ad_campaigns ${dateFilter} ORDER BY last_updated DESC
   `).all() as Campaign[]
 
   const recommendations = db.prepare(`
     SELECT * FROM ad_recommendations ORDER BY created_at DESC LIMIT 20
   `).all() as Recommendation[]
 
-  const entityFilter = ENTITIES.map(e => e.label)
+  const lastSynced = db.prepare(`
+    SELECT MAX(last_updated) as ts FROM ad_campaigns
+  `).get() as { ts: string | null }
+
+  const visibleCampaigns = activeTab === 'active'
+    ? campaigns.filter(c => c.status === 'active' || c.status === 'ACTIVE')
+    : activeTab === 'paused'
+    ? campaigns.filter(c => c.status === 'paused' || c.status === 'PAUSED')
+    : campaigns
 
   const byEntity = ENTITIES.map(entity => ({
     entity,
-    campaigns: campaigns.filter(c => c.entity === entity.label || c.entity === entity.slug),
+    campaigns: visibleCampaigns.filter(c => c.entity === entity.label || c.entity === entity.slug),
   })).filter(e => e.campaigns.length > 0)
 
-  const totalActive = campaigns.filter(c => c.status === 'active').length
+  const totalActive = campaigns.filter(c => c.status === 'active' || c.status === 'ACTIVE').length
   const totalBudget = campaigns.reduce((sum, c) => sum + ((c.budget_monthly as number) || 0), 0)
-  const totalSpend = campaigns.reduce((sum, c) => sum + ((c.spend_mtd as number) || 0), 0)
+  const totalSpend = campaigns.reduce((sum, c) => sum + ((c.spend as number) || (c.spend_mtd as number) || 0), 0)
+  const totalLeads = campaigns.reduce((sum, c) => sum + ((c.leads as number) || 0), 0)
+  const avgCpl = totalLeads > 0 ? totalSpend / totalLeads : 0
 
   return (
     <div style={{ padding: '28px 32px', maxWidth: 1400 }}>
@@ -58,25 +78,54 @@ export default async function AdsPage() {
       }}>
         <div>
           <div className="label" style={{ marginBottom: 6 }}>Advertising</div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>📊 Ad Campaigns</h1>
-          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+          <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>Ad Campaigns</h1>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--green)' }}>
-              {totalActive} active campaigns
+              {totalActive} active
             </span>
-            {totalBudget > 0 && (
+            {totalSpend > 0 && (
               <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
-                ${totalBudget.toLocaleString()} / mo budget
+                ${totalSpend.toLocaleString(undefined, {maximumFractionDigits: 0})} spend
               </span>
             )}
-            {totalSpend > 0 && (
-              <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                ${totalSpend.toLocaleString()} MTD spend
+            {totalLeads > 0 && (
+              <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--blue)' }}>
+                {totalLeads} leads
+              </span>
+            )}
+            {avgCpl > 0 && (
+              <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                ${avgCpl.toFixed(0)} CPL
+              </span>
+            )}
+            {lastSynced.ts && (
+              <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                synced: {new Date(lastSynced.ts).toLocaleDateString()}
               </span>
             )}
           </div>
         </div>
-        <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-          {campaigns.length} total campaigns
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[
+            { tab: 'active', label: `Active (${campaigns.filter(c => c.status === 'active' || c.status === 'ACTIVE').length})` },
+            { tab: 'paused', label: `Paused (${campaigns.filter(c => c.status === 'paused' || c.status === 'PAUSED').length})` },
+            { tab: 'all', label: `All (${campaigns.length})` },
+          ].map(t => (
+            <Link key={t.tab} href={`/ads?tab=${t.tab}${showAll ? '&show_all=1' : ''}`} style={{
+              padding: '5px 12px', borderRadius: 6, fontSize: 11, fontFamily: 'var(--font-mono)',
+              textDecoration: 'none',
+              border: `1px solid ${activeTab === t.tab ? 'var(--blue-border)' : 'var(--border-faint)'}`,
+              background: activeTab === t.tab ? 'var(--blue-bg)' : 'transparent',
+              color: activeTab === t.tab ? 'var(--blue)' : 'var(--text-muted)',
+              fontWeight: activeTab === t.tab ? 600 : 400,
+            }}>{t.label}</Link>
+          ))}
+          <Link href={`/ads?tab=${activeTab}${showAll ? '' : '&show_all=1'}`} style={{
+            padding: '5px 12px', borderRadius: 6, fontSize: 11, fontFamily: 'var(--font-mono)',
+            textDecoration: 'none', marginLeft: 4,
+            border: '1px solid var(--border-faint)',
+            color: 'var(--text-muted)',
+          }}>{showAll ? 'Last 90d' : 'All time'}</Link>
         </div>
       </div>
 

@@ -6,9 +6,23 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req)
   if (auth) return auth
 
-  const status = new URL(req.url).searchParams.get('status') || 'pending'
+  const url = new URL(req.url)
+  const status = url.searchParams.get('status') || 'pending'
+  const entity = url.searchParams.get('entity')
   const db = await getUniversalDb()
-  const rawApprovals = await db.all("SELECT * FROM approvals WHERE status = ? ORDER BY CASE urgency WHEN 'urgent' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END, created_at ASC", status) as Record<string, unknown>[]
+
+  const entityClause = entity ? `AND entity = ?` : ''
+  const args: unknown[] = entity ? [status, entity] : [status]
+
+  const rawApprovals = await db.all(
+    `SELECT * FROM approvals WHERE status = ? ${entityClause}
+     ORDER BY CASE urgency
+       WHEN 'critical' THEN 1 WHEN 'urgent' THEN 1
+       WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'medium' THEN 3
+       WHEN 'low' THEN 4 ELSE 3 END,
+     created_at ASC`,
+    ...args
+  ) as Record<string, unknown>[]
   const approvals = parseJsonArrayFields(rawApprovals, ['deliverables'])
   return NextResponse.json(approvals)
 }

@@ -57,6 +57,19 @@ export default async function PropertiesPage() {
   const totalMonthly = loanSummary.reduce((sum, l) => sum + (Number(l.total_monthly) || 0), 0)
   const totalBalance = loanSummary.reduce((sum, l) => sum + (Number(l.total_balance) || 0), 0)
 
+  // Data quality audit
+  const dataQuality = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN address IS NULL OR address = '' THEN 1 ELSE 0 END) as missing_address,
+      SUM(CASE WHEN holding_company_id IS NULL OR holding_company_id = '' THEN 1 ELSE 0 END) as missing_hc,
+      SUM(CASE WHEN status IS NULL THEN 1 ELSE 0 END) as missing_status,
+      SUM(CASE WHEN estimated_value IS NULL THEN 1 ELSE 0 END) as missing_value
+    FROM properties
+  `).get() as Record<string, number>
+
+  const dataIssues = (dataQuality.missing_address || 0) + (dataQuality.missing_hc || 0) + (dataQuality.missing_status || 0)
+
   const loansByCompany = Object.fromEntries(loanSummary.map(l => [l.holding_company_id, l]))
   const insuranceByCompany = Object.fromEntries(insuranceSummary.map(i => [i.holding_company_id, i]))
   const loansByProperty = Object.fromEntries(propertyLoans.map(l => [l.property_id, l]))
@@ -120,6 +133,23 @@ export default async function PropertiesPage() {
           </div>
         ))}
       </div>
+
+      {/* Data Quality Indicator */}
+      {dataIssues > 0 && (
+        <div style={{
+          background: 'var(--amber-bg)', border: '1px solid var(--amber-border)',
+          borderRadius: 6, padding: '10px 16px', marginBottom: 16,
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--amber)', fontWeight: 600 }}>⚠ Data Quality</span>
+          <span style={{ fontSize: 12, color: 'var(--amber)' }}>
+            {dataIssues} field{dataIssues !== 1 ? 's' : ''} missing across properties:
+            {(dataQuality.missing_address > 0) && ` ${dataQuality.missing_address} missing address,`}
+            {(dataQuality.missing_hc > 0) && ` ${dataQuality.missing_hc} missing holding company,`}
+            {(dataQuality.missing_status > 0) && ` ${dataQuality.missing_status} missing status`}
+          </span>
+        </div>
+      )}
 
       {/* Total Debt Summary */}
       {totalBalance > 0 && (

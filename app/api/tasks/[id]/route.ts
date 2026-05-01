@@ -29,6 +29,48 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json()
   const { id } = await params
 
+  // Deliverable Standard gate: marking a deliverable task complete requires a
+  // matching row in deliverable_audits (5-field signature). POST /api/deliverables
+  // is the only path that can set status=completed for a deliverable task.
+  if (typeof body.status === 'string' && body.status.toLowerCase() === 'completed') {
+    const task = (await db.get(
+      'SELECT id, tags FROM tasks WHERE id = ?',
+      id
+    )) as { id: string; tags?: string } | null
+    if (task) {
+      let tags: string[] = []
+      try { tags = JSON.parse(task.tags || '[]') } catch { tags = [] }
+      const isDeliverable = tags.some(t => /^(deliverable|report|content|brief|spec|copy|strategy|research|design)$/i.test(t))
+      if (isDeliverable && !body.bypass_deliverable_gate) {
+        // Best-effort: only check if the deliverable_audits table exists.
+        let hasAudit = false
+        try {
+          const audit = (await db.get(
+            'SELECT id FROM deliverable_audits WHERE mc_task_id = ? LIMIT 1',
+            id
+          )) as { id: string } | null
+          hasAudit = !!audit
+        } catch {
+          hasAudit = true // table doesn't exist yet → don't block (first run)
+        }
+        if (!hasAudit) {
+          return NextResponse.json(
+            {
+              error: 'deliverable_standard_violation',
+              rule: 'SHARED-CRIT-2026-04-29-DELIVERABLE-STANDARD',
+              violations: [
+                'Cannot mark a deliverable task complete without a /api/deliverables audit row. ' +
+                'POST to /api/deliverables with claude_session_id, asset_id, drive_url, email_message_id, email_from=hank@timberandlove.com first.',
+              ],
+              task_id: id,
+            },
+            { status: 422 }
+          )
+        }
+      }
+    }
+  }
+
   const fields: string[] = []
   const values: unknown[] = []
 

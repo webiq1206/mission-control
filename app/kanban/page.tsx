@@ -33,12 +33,14 @@ const COLUMN_DEFS = [
 ]
 
 function getColumn(status: string): string {
-  if (['executing', 'approved', 'in_progress'].includes(status)) return 'in_progress'
-  if (['approval_gated', 'proposed'].includes(status)) return 'needs_approval'
+  if (['executing', 'approved', 'in_progress', 'assigned', 'next', 'open', 'on_hold'].includes(status)) return 'in_progress'
+  if (['approval_gated', 'proposed', 'pending_review'].includes(status)) return 'needs_approval'
   if (status === 'review') return 'review'
   if (status === 'backlog') return 'backlog'
   if (status === 'blocked') return 'blocked'
   if (status === 'completed') return 'completed'
+  if (status === 'archived') return 'archived'
+  if (status === 'cancelled') return 'cancelled'
   return 'backlog'
 }
 
@@ -49,11 +51,23 @@ function getAgentDisplay(agentId: string | null): string {
   return agentId
 }
 
-export default async function KanbanPage() {
+export default async function KanbanPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ entity?: string; show_archived?: string }>
+}) {
+  const params = await searchParams
+  const entityFilter = params.entity || ''
+  const showArchived = params.show_archived === '1'
+
   const db = getDb()
+
+  const entityClause = entityFilter ? `AND entity = '${entityFilter.replace(/'/g, "''")}'` : ''
+  const archiveClause = showArchived ? '' : `AND status NOT IN ('archived', 'cancelled')`
 
   const allTasks = db.prepare(`
     SELECT * FROM tasks
+    WHERE 1=1 ${entityClause} ${archiveClause}
     ORDER BY
       CASE priority
         WHEN 'critical' THEN 1
@@ -63,6 +77,10 @@ export default async function KanbanPage() {
       END,
       updated_at DESC
   `).all() as Task[]
+
+  const allEntities = db.prepare(
+    `SELECT DISTINCT entity FROM tasks WHERE entity IS NOT NULL AND entity != '' ORDER BY entity`
+  ).all() as { entity: string }[]
 
   const entityStats = ENTITIES.map(entity => {
     const tasks = allTasks.filter(t => {
@@ -93,7 +111,7 @@ export default async function KanbanPage() {
 
   const completedByEntity: Record<string, number> = {}
   const columns: Record<string, Task[]> = {
-    backlog: [], needs_approval: [], in_progress: [], review: [], blocked: [], completed: []
+    backlog: [], needs_approval: [], in_progress: [], review: [], blocked: [], completed: [], archived: [], cancelled: []
   }
 
   for (const task of allTasks) {
@@ -118,22 +136,56 @@ export default async function KanbanPage() {
 
       {/* Header */}
       <div style={{
-        marginBottom: 32, paddingBottom: 24,
+        marginBottom: 24, paddingBottom: 20,
         borderBottom: '1px solid var(--border-subtle)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
       }}>
-        <div>
-          <div className="label" style={{ marginBottom: 6 }}>Mission Control</div>
-          <h1 className="h1" style={{ marginBottom: 4 }}>
-            All Entities — Kanban
-          </h1>
-          <div className="meta">
-            {format(now, 'EEEE, MMMM d yyyy — h:mm a')} · {allTasks.length} total tasks
+        <div className="label" style={{ marginBottom: 6 }}>Mission Control</div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h1 className="h1" style={{ marginBottom: 4 }}>
+              {entityFilter ? `${entityFilter} — Kanban` : 'All Entities — Kanban'}
+            </h1>
+            <div className="meta">
+              {format(now, 'EEEE, MMMM d yyyy — h:mm a')} · {allTasks.length} tasks shown
+            </div>
           </div>
         </div>
-        <Link href="/tasks" className="btn btn-ghost" style={{ fontSize: 12 }}>
-          All Tasks
-        </Link>
+
+        {/* Filters */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="meta">Entity:</span>
+          <Link
+            href={`/kanban${showArchived ? '?show_archived=1' : ''}`}
+            style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 11, textDecoration: 'none',
+              border: `1px solid ${!entityFilter ? 'var(--blue-border)' : 'var(--border-faint)'}`,
+              background: !entityFilter ? 'var(--blue-bg)' : 'transparent',
+              color: !entityFilter ? 'var(--blue)' : 'var(--text-muted)',
+            }}
+          >All</Link>
+          {allEntities.map(e => (
+            <Link
+              key={e.entity}
+              href={`/kanban?entity=${encodeURIComponent(e.entity)}${showArchived ? '&show_archived=1' : ''}`}
+              style={{
+                padding: '4px 10px', borderRadius: 6, fontSize: 11, textDecoration: 'none',
+                border: `1px solid ${entityFilter === e.entity ? 'var(--blue-border)' : 'var(--border-faint)'}`,
+                background: entityFilter === e.entity ? 'var(--blue-bg)' : 'transparent',
+                color: entityFilter === e.entity ? 'var(--blue)' : 'var(--text-muted)',
+              }}
+            >{e.entity}</Link>
+          ))}
+          <span style={{ marginLeft: 8, width: 1, height: 16, background: 'var(--border-faint)' }} />
+          <Link
+            href={`/kanban${entityFilter ? `?entity=${encodeURIComponent(entityFilter)}&` : '?'}${showArchived ? '' : 'show_archived=1'}`}
+            style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 11, textDecoration: 'none',
+              border: `1px solid ${showArchived ? 'var(--border-default)' : 'var(--border-faint)'}`,
+              background: showArchived ? 'var(--bg-elevated)' : 'transparent',
+              color: showArchived ? 'var(--text-primary)' : 'var(--text-muted)',
+            }}
+          >{showArchived ? 'Hide Archived' : 'Show Archived'}</Link>
+        </div>
       </div>
 
       {/* Entity Summary Row */}
@@ -187,7 +239,10 @@ export default async function KanbanPage() {
       <div>
         <div className="label" style={{ marginBottom: 16 }}>Unified Task Board</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, overflowX: 'auto' }}>
-          {COLUMN_DEFS.map(col => {
+          {[...COLUMN_DEFS, ...(showArchived ? [
+            { key: 'archived', label: 'ARCHIVED', color: 'var(--text-faint)', hint: 'Archived tasks' },
+            { key: 'cancelled', label: 'CANCELLED', color: 'var(--text-faint)', hint: 'Cancelled tasks' },
+          ] : [])].map(col => {
             const tasks = columns[col.key] || []
             return (
               <div key={col.key} style={{ minWidth: 280 }}>
