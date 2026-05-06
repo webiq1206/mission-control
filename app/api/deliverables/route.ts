@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUniversalDb } from '@/lib/db-universal'
+import { requireAuth } from '../middleware'
 
 /**
  * Deliverable Standard validator — enforces SHARED-CRIT-2026-04-29-DELIVERABLE-STANDARD.
@@ -70,6 +71,8 @@ function validate(body: DeliverableBody): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireAuth(req)
+  if (authError) return authError
   const db = await getUniversalDb()
   await ensureSchema(db)
 
@@ -146,6 +149,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireAuth(req)
+  if (authError) return authError
   const db = await getUniversalDb()
   await ensureSchema(db)
 

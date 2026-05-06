@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const PASSWORD = 'l0veandtimber'
+const PASSWORD = process.env.MC_LOGIN_PASSWORD || 'l0veandtimber'
 const COOKIE_NAME = 'mc_auth'
 const COOKIE_VALUE = 'authenticated'
 
 export async function POST(request: NextRequest) {
   const { password } = await request.json()
 
-  if (password !== PASSWORD) {
+  if (!PASSWORD || password !== PASSWORD) {
     return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
   }
 

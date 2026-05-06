@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUniversalDb } from '@/lib/db-universal'
+import { requireAuth } from '../middleware'
 
 export async function GET(req: NextRequest) {
+  const authError = requireAuth(req)
+  if (authError) return authError
   const db = await getUniversalDb()
   const { searchParams } = new URL(req.url)
   const entity = searchParams.get('entity')
@@ -39,6 +42,8 @@ const JARED_FACING_CATEGORIES = new Set([
 ])
 
 export async function POST(req: NextRequest) {
+  const authError = requireAuth(req)
+  if (authError) return authError
   const db = await getUniversalDb()
   const body = await req.json()
 

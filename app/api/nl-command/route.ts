@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUniversalDb } from '@/lib/db-universal'
 import { AGENTS } from '@/lib/entities'
 import { detectIntent } from '@/lib/llm'
+import { requireAuth } from '../middleware'
 
 const ENTITY_REF_PATTERN = /\[(approval|task|priority|idea|recommendation):([^\]]+)\]/g
 
@@ -32,6 +33,8 @@ async function resolveActivityContext(db: UniversalDb, activityId: string) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireAuth(req)
+  if (authError) return authError
   const db = await getUniversalDb()
   const body = await req.json()
   let { itemType, itemId, command, entitySlug } = body
